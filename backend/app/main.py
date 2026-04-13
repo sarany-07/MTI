@@ -1,0 +1,384 @@
+from fastapi import FastAPI, Depends, HTTPException
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+# Import DB session
+from app.database import get_db, SessionLocal
+from app import models, schemas
+# Import models (tables)
+import app.models as models
+
+
+from fastapi.middleware.cors import CORSMiddleware
+import random  # for random selection
+
+from collections import defaultdict
+from app.email_utils import send_email
+# Create FastAPI app
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/")
+def home():
+    return {"message": "Backend is running 🚀"}
+
+
+
+@app.post("/departments/")
+def create_department(name: str, db: Session = Depends(get_db)):
+    
+    # Create department object (NOT yet saved in DB)
+    dept = models.Department(department_name=name)
+    
+    # Add to session (like staging area)
+    db.add(dept)
+    
+    # Save to database (commit = permanent save)
+    db.commit()
+    
+    # Refresh gets updated data (like auto-generated ID)
+    db.refresh(dept)
+    
+    # Return created department
+    return dept
+
+
+@app.post("/users/")
+def create_user(
+    name: str,
+    email: str,
+    role: str,
+    department_id: int,
+    db: Session = Depends(get_db)
+):
+    
+    # Create user object
+    user = models.User(
+        name=name,
+        email=email,
+        role=role,
+        department_id=department_id
+    )
+    
+    # Add to session
+    db.add(user)
+    
+    # Save to DB
+    db.commit()
+    
+    # Get updated data (like user_id)
+    db.refresh(user)
+    
+    # Return created user
+    return user
+
+
+@app.get("/users/")
+def get_users(db: Session = Depends(get_db)):
+    
+    # Query all users from DB
+    users = db.query(models.User).all()
+    
+    # Return list of users
+    return users
+
+
+@app.get("/departments/")
+def get_departments(db: Session = Depends(get_db)):
+    
+    # Fetch all departments
+    departments = db.query(models.Department).all()
+    
+    return departments
+
+
+@app.post("/assign-reviews/")
+def assign_reviews(num: int = 4, db: Session = Depends(get_db)):
+
+    users = db.query(models.User).all()
+
+    # 🔹 Clear old assignments
+    db.query(models.ReviewAssignment).delete()
+
+    assignments_map = defaultdict(list)
+
+    # 🔹 Create assignments
+    for user in users:
+        other_users = [u for u in users if u.user_id != user.user_id]
+
+        assigned_users = random.sample(other_users, min(num, len(other_users)))
+
+        for target in assigned_users:
+            assignment = models.ReviewAssignment(
+                reviewer_id=user.user_id,
+                reviewee_id=target.user_id
+            )
+            db.add(assignment)
+
+            # Store for email
+            assignments_map[user.user_id].append(target)
+
+    db.commit()
+
+    # 🔥 SEND EMAILS
+    for user in users:
+        assigned_people = assignments_map[user.user_id]
+
+        if not assigned_people:
+            continue
+
+        names = "\n".join([f"- {p.name}" for p in assigned_people])
+
+        email_body = f"""
+Hi {user.name},
+
+You have been assigned to review the following colleagues:
+
+{names}
+
+Please submit your reviews here:
+http://localhost:3000
+
+Thanks,
+Admin Team
+        """
+
+        send_email(
+            to_email=user.email,
+            subject="Review Assignment",
+            body=email_body
+        )
+
+    return {"message": "Assignments created and emails sent!"}
+
+
+
+
+# Dependency (DB session)
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+# @app.post("/submit-review/")
+# def submit_review(review: schemas.ReviewCreate, db: Session = Depends(get_db)):
+    
+#     # 1️⃣ Check if reviewer already gave 4 reviews
+#     review_count = db.query(models.Review).filter(
+#         models.Review.reviewer_id == review.reviewer_id
+#     ).count()
+
+#     if review_count >= 4:
+#         raise HTTPException(status_code=400, detail="Review limit reached (4 only)")
+
+#     # 2️⃣ Prevent self-review
+#     if review.reviewer_id == review.reviewee_id:
+#         raise HTTPException(status_code=400, detail="You cannot review yourself")
+
+#     # 3️⃣ Save review
+#     new_review = models.Review(
+#         reviewer_id=review.reviewer_id,
+#         reviewee_id=review.reviewee_id,
+#         rating=review.rating,
+#         review_text=review.review_text
+#     )
+
+#     db.add(new_review)
+#     db.commit()
+
+#     return {"message": "Review submitted successfully"}
+
+
+@app.post("/submit-review/")
+def submit_review(review: schemas.ReviewCreate, db: Session = Depends(get_db)):
+
+    # 1️⃣ Check assignment exists
+    assignment = db.query(models.ReviewAssignment).filter(
+        models.ReviewAssignment.reviewer_id == review.reviewer_id,
+        models.ReviewAssignment.reviewee_id == review.reviewee_id
+    ).first()
+
+    if not assignment:
+        raise HTTPException(
+            status_code=400,
+            detail="You are not allowed to review this user"
+        )
+
+    # 3️⃣ Prevent duplicate review
+    existing_review = db.query(models.Review).filter(
+        models.Review.reviewer_id == review.reviewer_id,
+        models.Review.reviewee_id == review.reviewee_id
+    ).first()
+
+    if existing_review:
+        raise HTTPException(
+            status_code=400,
+            detail="You already reviewed this user"
+        )
+
+    # 4️⃣ Save review
+    new_review = models.Review(
+        reviewer_id=review.reviewer_id,
+        reviewee_id=review.reviewee_id,
+        rating=review.rating,
+        review_text=review.review_text
+    )
+
+    db.add(new_review)
+    db.commit()
+
+    return {"message": "Review submitted successfully"}
+
+
+
+@app.get("/submit-review/")
+def get_reviews(db: Session = Depends(get_db)):
+    
+    # Query all users from DB
+    reviews = db.query(models.Review).all()
+    
+    # Return list of users
+    return reviews
+
+
+
+@app.get("/reviews/")
+def get_all_reviews(db: Session = Depends(get_db)):
+    
+    # Fetch all reviews
+    reviews = db.query(models.Review).all()
+    
+    return reviews
+
+
+@app.get("/reviews/filter/")
+def filter_reviews(
+    reviewer_id: int = None,
+    reviewee_id: int = None,
+    rating: int = None,
+    db: Session = Depends(get_db)
+):
+    
+    query = db.query(models.Review)
+
+    # Apply filters dynamically
+    if reviewer_id:
+        query = query.filter(models.Review.reviewer_id == reviewer_id)
+
+    if reviewee_id:
+        query = query.filter(models.Review.reviewee_id == reviewee_id)
+
+    if rating:
+        query = query.filter(models.Review.rating == rating)
+
+    return query.all()
+
+
+@app.get("/reviews/average/")
+def average_rating(db: Session = Depends(get_db)):
+    
+    result = db.query(
+        models.Review.reviewee_id,
+        func.avg(models.Review.rating).label("avg_rating")
+    ).group_by(models.Review.reviewee_id).all()
+    
+    return result
+
+@app.get("/reviews/detailed/")
+def detailed_reviews(db: Session = Depends(get_db)):
+    
+    result = db.query(
+        models.Review.review_id,
+        models.User.name.label("reviewer_name"),
+        models.Review.reviewee_id,
+        models.Review.rating,
+        models.Review.review_text
+    ).join(
+        models.User,
+        models.Review.reviewer_id == models.User.user_id
+    ).all()
+    
+    return result
+
+
+@app.get("/assignments/")
+def get_assignments(db: Session = Depends(get_db)):
+    return db.query(models.ReviewAssignment).all()
+
+
+
+# @app.delete("/users/{user_id}")
+# def delete_assignment(user_id: int, db: Session = Depends(get_db)):
+
+#     db.query(models.User).filter(
+#         models.User.user_id == user_id
+#     ).delete()
+#     db.commit()
+#     return {"message": "User deleted"}
+
+
+
+@app.delete("/users/{user_id}")
+def delete_user(user_id: int, db: Session = Depends(get_db)):
+
+    # 🔹 Delete related reviews
+    db.query(models.Review).filter(
+        (models.Review.reviewer_id == user_id) |
+        (models.Review.reviewee_id == user_id)
+    ).delete(synchronize_session=False)
+
+    # 🔹 Delete assignments
+    db.query(models.ReviewAssignment).filter(
+        (models.ReviewAssignment.reviewer_id == user_id) |
+        (models.ReviewAssignment.reviewee_id == user_id)
+    ).delete(synchronize_session=False)
+
+    # 🔹 Delete user
+    db.query(models.User).filter(models.User.user_id == user_id).delete()
+
+    db.commit()
+
+    return {"message": f"User {user_id} deleted"}
+
+
+@app.delete("/users/")
+def delete_all_users(db: Session = Depends(get_db)):
+
+    # 🔹 Delete all reviews
+    db.query(models.Review).delete()
+
+    # 🔹 Delete all assignments
+    db.query(models.ReviewAssignment).delete()
+
+    # 🔹 Delete all users
+    db.query(models.User).delete()
+
+    db.commit()
+
+    return {"message": "All users deleted"}
+
+
+@app.delete("/departments/{department_id}")
+def delete_department(department_id: int, db: Session = Depends(get_db)):
+
+    # Optional: remove users in that department
+    db.query(models.User).filter(
+        models.User.department_id == department_id
+    ).delete()
+
+    db.query(models.Department).filter(
+        models.Department.department_id == department_id
+    ).delete()
+
+    db.commit()
+
+    return {"message": "Department deleted"}
