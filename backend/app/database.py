@@ -1,12 +1,17 @@
 import os
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, declarative_base
 
+# Base is REQUIRED for models
+Base = declarative_base()
+
+# Get DB URL
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 engine = None
 SessionLocal = None
 
+# Only connect if valid MySQL URL
 if DATABASE_URL and DATABASE_URL.startswith("mysql"):
     try:
         engine = create_engine(DATABASE_URL)
