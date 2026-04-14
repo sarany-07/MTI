@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import random  # for random selection
 
 from collections import defaultdict
-from app.email_utils import send_email
+from app.email_utils import send_email, send_html_email
 # Create FastAPI app
 app = FastAPI()
 
@@ -382,3 +382,99 @@ def delete_department(department_id: int, db: Session = Depends(get_db)):
     db.commit()
 
     return {"message": "Department deleted"}
+
+
+# ================= MANUAL ASSIGN =================
+
+@app.post("/manual-assign/")
+def manual_assign(request: schemas.ManualAssignRequest, db: Session = Depends(get_db)):
+    """
+    Manually assign selected users to selected Reviewer and send email notifications.
+    - reviewer_ids: list of user IDs who will receive the assignment (Reviewer)
+    - reviewee_ids: list of user IDs to be assigned (reviewees)
+    """
+
+    # Validate Reviewer IDs
+    m_reviewers = db.query(models.User).filter(
+        models.User.user_id.in_(request.reviewer_ids)
+    ).all()
+
+    print(m_reviewers)
+
+    if not m_reviewers:
+        raise HTTPException(status_code=404, detail="No valid recipients found")
+
+    # Validate Reviewee IDs
+    assignees = db.query(models.User).filter(
+        models.User.user_id.in_(request.reviewee_ids)
+    ).all()
+
+    if not assignees:
+        raise HTTPException(status_code=404, detail="No valid assignees found")
+
+    created_count = 0
+    skipped_count = 0
+    email_success = 0
+    email_failed = 0
+
+    for recipient in m_reviewers:
+        assigned_user_details = []
+
+        for assignee in assignees:
+            # Skip self-assignment
+            if recipient.user_id == assignee.user_id:
+                skipped_count += 1
+                continue
+
+            # Check if assignment already exists
+            existing = db.query(models.ReviewAssignment).filter(
+                models.ReviewAssignment.reviewer_id == recipient.user_id,
+                models.ReviewAssignment.reviewee_id == assignee.user_id
+            ).first()
+
+            if existing:
+                skipped_count += 1
+                # Still include in email even if already assigned
+                assigned_user_details.append({
+                    "name": assignee.name,
+                    "email": assignee.email,
+                    "role": assignee.role
+                })
+                continue
+
+            # Create new assignment
+            assignment = models.ReviewAssignment(
+                reviewer_id=recipient.user_id,
+                reviewee_id=assignee.user_id
+            )
+            db.add(assignment)
+            created_count += 1
+
+            assigned_user_details.append({
+                "name": assignee.name,
+                "email": assignee.email,
+                "role": assignee.role
+            })
+
+        # Send HTML email to this recipient
+        if assigned_user_details:
+            success = send_html_email(
+                to_email=recipient.email,
+                subject="Manual Review Assignment",
+                recipient_name=recipient.name,
+                assigned_users=assigned_user_details
+            )
+            if success:
+                email_success += 1
+            else:
+                email_failed += 1
+
+    db.commit()
+
+    return {
+        "message": "Manual assignments processed!",
+        "assignments_created": created_count,
+        "assignments_skipped": skipped_count,
+        "emails_sent": email_success,
+        "emails_failed": email_failed
+    }

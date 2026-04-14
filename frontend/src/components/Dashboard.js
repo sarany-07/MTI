@@ -1,5 +1,41 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
+
+// ─── Toast Notification Component ────────────────────────────────────
+function Toast({ message, type, onClose }) {
+  useEffect(() => {
+    const timer = setTimeout(onClose, 4000);
+    return () => clearTimeout(timer);
+  }, [onClose]);
+
+  const colors = {
+    success: { bg: "linear-gradient(135deg, #10b981, #059669)", icon: "✓" },
+    error:   { bg: "linear-gradient(135deg, #ef4444, #dc2626)", icon: "✕" },
+    info:    { bg: "linear-gradient(135deg, #3b82f6, #2563eb)", icon: "ℹ" },
+  };
+  const c = colors[type] || colors.info;
+
+  return (
+    <div style={{
+      position: "fixed", top: 24, right: 24, zIndex: 9999,
+      background: c.bg, color: "#fff", padding: "14px 24px",
+      borderRadius: 12, boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+      display: "flex", alignItems: "center", gap: 12,
+      animation: "slideIn 0.4s ease", minWidth: 280, maxWidth: 420,
+      fontFamily: "'Inter', 'Segoe UI', sans-serif",
+    }}>
+      <span style={{ fontSize: 18, fontWeight: 700, width: 28, height: 28,
+        borderRadius: "50%", background: "rgba(255,255,255,0.25)",
+        display: "flex", alignItems: "center", justifyContent: "center"
+      }}>{c.icon}</span>
+      <span style={{ flex: 1, fontSize: 14, fontWeight: 500 }}>{message}</span>
+      <button onClick={onClose} style={{
+        background: "none", border: "none", color: "#fff",
+        cursor: "pointer", fontSize: 18, opacity: 0.7, padding: 0,
+      }}>×</button>
+    </div>
+  );
+}
 
 function Dashboard() {
   const [reviews, setReviews] = useState([]);
@@ -15,6 +51,20 @@ function Dashboard() {
 
   const [activeTab, setActiveTab] = useState("Welcome");
   const [currentTime, setCurrentTime] = useState(new Date());
+
+  // ─── Manual Assign State ───────────────────────────────────────────
+  const [manualReviewer, setManualReviewer] = useState([]);
+  const [manualReviewee, setManualAssignees] = useState([]);
+  const [manualStep, setManualStep] = useState(1);
+  const [Reviewerearch, setReviewerearch] = useState("");
+  const [assigneeSearch, setAssigneeSearch] = useState("");
+  const [isSending, setIsSending] = useState(false);
+
+  // ─── Toast State ────────────────────────────────────────────────────
+  const [toast, setToast] = useState(null);
+  const showToast = useCallback((message, type = "info") => {
+    setToast({ message, type });
+  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -65,10 +115,11 @@ function Dashboard() {
   const assignReviews = async () => {
     try {
       await axios.post(`http://127.0.0.1:8000/assign-reviews/?num=${assignmentsPerUser}`);
-      alert("Assignments generated successfully!");
+      showToast("Assignments generated successfully!", "success");
       fetchAssignments(); // refresh
     } catch (error) {
       console.error(error);
+      showToast("Failed to generate assignments", "error");
   }
 };
 
@@ -78,11 +129,14 @@ function Dashboard() {
     await axios.post("http://127.0.0.1:8000/users/", null, { params: newUser });
     fetchUsers();
     setNewUser({ name: "", email: "", role: "", department_id: "" });
+    showToast("User created successfully!", "success");
   };
 
   const createDepartment = async () => {
     await axios.post("http://127.0.0.1:8000/departments/", null, { params: { name: newDept.department_name } });
     fetchDepartments();
+    setNewDept({ department_name: "" });
+    showToast("Department created successfully!", "success");
   };
 
   // ================= DELETE =================
@@ -90,11 +144,13 @@ function Dashboard() {
   const deleteUser = async (id) => {
     await axios.delete(`http://127.0.0.1:8000/users/${id}`);
     fetchUsers();
+    showToast("User deleted", "info");
   };
 
   const deleteDepartment = async (id) => {
     await axios.delete(`http://127.0.0.1:8000/departments/${id}`);
     fetchDepartments();
+    showToast("Department deleted", "info");
   };
 
   // ================= FILTER =================
@@ -108,13 +164,87 @@ function Dashboard() {
     setReviews(res.data);
   };
 
+  // ================= MANUAL ASSIGN =================
 
+  const toggleRecipient = (userId) => {
+    setManualReviewer(prev =>
+      prev.includes(userId)
+        ? prev.filter(id => id !== userId)
+        : [...prev, userId]
+    );
+  };
+
+  const toggleAssignee = (userId) => {
+    setManualAssignees(prev =>
+      prev.includes(userId)
+        ? prev.filter(id => id !== userId)
+        : [...prev, userId]
+    );
+  };
+
+  const selectAllReviewer = () => {
+    const filtered = users.filter(u =>
+      u.name.toLowerCase().includes(Reviewerearch.toLowerCase())
+    );
+    const allSelected = filtered.every(u => manualReviewer.includes(u.user_id));
+    if (allSelected) {
+      setManualReviewer(prev => prev.filter(id => !filtered.find(u => u.user_id === id)));
+    } else {
+      setManualReviewer(prev => [...new Set([...prev, ...filtered.map(u => u.user_id)])]);
+    }
+  };
+
+  const selectAllAssignees = () => {
+    const filtered = users.filter(u =>
+      u.name.toLowerCase().includes(assigneeSearch.toLowerCase())
+    );
+    const allSelected = filtered.every(u => manualReviewee.includes(u.user_id));
+    if (allSelected) {
+      setManualAssignees(prev => prev.filter(id => !filtered.find(u => u.user_id === id)));
+    } else {
+      setManualAssignees(prev => [...new Set([...prev, ...filtered.map(u => u.user_id)])]);
+    }
+  };
+
+  const sendManualAssignment = async () => {
+    if (manualReviewer.length === 0 || manualReviewee.length === 0) {
+      showToast("Please select at least one reviewer and one reviewee", "error");
+      return;
+    }
+
+    setIsSending(true);
+    try {
+      const res = await axios.post("http://127.0.0.1:8000/manual-assign/", {
+        reviewer_ids: manualReviewer,
+        reviewee_ids: manualReviewee,
+      });
+      showToast(
+        `${res.data.assignments_created} assignments created, ${res.data.emails_sent} emails sent!`,
+        "success"
+      );
+      fetchAssignments();
+      // Reset
+      setManualReviewer([]);
+      setManualAssignees([]);
+      setManualStep(1);
+    } catch (error) {
+      console.error(error);
+      showToast("Failed to send manual assignments", "error");
+    } finally {
+      setIsSending(false);
+    }
+  };
 
 
   // ================= HELPERS =================
   const getUserName = (id) => {
     const user = users.find(u => u.user_id === id);
     return user ? user.name : `User ${id}`;
+  };
+
+  const getUserEmail = (id) => {
+    const user = users.find(u => u.user_id === id);
+    return user ? user.email : "";
   };
 
   const filteredReviews = reviews.filter(r => {
@@ -133,106 +263,220 @@ function Dashboard() {
 
   // ================= UI =================
 
+  const sidebarItems = [
+    { key: "Dashboard", icon: (
+      <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1" /></svg>
+    )},
+    { key: "Organization", label: "Users & Departments", icon: (
+      <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+    )},
+    { key: "Assign Reviews", icon: (
+      <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+    )},
+    { key: "Manual Assign", icon: (
+      <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+    )},
+  ];
+
   return (
-    <div className="flex min-h-screen bg-gray-100">
+    <div style={{ display: "flex", minHeight: "100vh", background: "#f0f4f8", fontFamily: "'Inter', 'Segoe UI', sans-serif" }}>
+      {/* Global Animations */}
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+        @keyframes slideIn { from { transform: translateX(80px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes fadeUp { from { transform: translateY(16px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .card-hover { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .card-hover:hover { transform: translateY(-2px); box-shadow: 0 12px 40px rgba(0,0,0,0.1) !important; }
+        .btn-primary { transition: all 0.2s ease; }
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(18, 121, 147, 0.35); }
+        .btn-primary:active { transform: translateY(0); }
+        .check-item { transition: all 0.2s ease; cursor: pointer; }
+        .check-item:hover { background: #f0f9fb !important; }
+        input:focus, select:focus { border-color: #127993 !important; box-shadow: 0 0 0 3px rgba(18,121,147,0.12) !important; }
+      `}</style>
 
       {/* 🔥 SIDEBAR */}
-      <div className="w-64 bg-[#127993] text-white p-6">
-        {/* <h2 className="text-2xl font-bold mb-6 cursor-pointer" onClick={() => setActiveTab('Welcome')}>MTI</h2> */}
-        <img className="w-[90%] mb-6" src="/logo_1.png" alt="" />
+      <div style={{
+        width: 260, background: "linear-gradient(180deg, #127993 0%, #0d5f72 50%, #0a4a59 100%)",
+        color: "#fff", padding: "0", display: "flex", flexDirection: "column",
+        boxShadow: "4px 0 24px rgba(0,0,0,0.12)",
+      }}>
+        <div style={{ padding: "28px 24px 20px", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+          <img style={{ width: "85%", filter: "brightness(1.1)" }} src="/logo_1.png" alt="MTI Logo" />
+        </div>
 
-        <ul className="space-y-4">
-          <li className={`cursor-pointer p-2 rounded ${activeTab === 'Dashboard' ? 'bg-[#0f6075]' : 'hover:bg-[#0f6075]'}`} onClick={() => setActiveTab('Dashboard')}>Dashboard</li>
-          <li className={`cursor-pointer p-2 rounded ${(activeTab === 'Organization' || activeTab === 'Users' || activeTab === 'Departments') ? 'bg-[#0f6075]' : 'hover:bg-[#0f6075]'}`} onClick={() => setActiveTab('Organization')}>Users & Departments</li>
-          <li className={`cursor-pointer p-2 rounded ${activeTab === 'Assign Reviews' ? 'bg-[#0f6075]' : 'hover:bg-[#0f6075]'}`} onClick={() => setActiveTab('Assign Reviews')}>Assign Reviews</li>
-        </ul>
+        <nav style={{ padding: "16px 12px", flex: 1 }}>
+          {sidebarItems.map(item => {
+            const isActive = activeTab === item.key || (item.key === "Organization" && (activeTab === "Users" || activeTab === "Departments"));
+            return (
+              <button
+                key={item.key}
+                onClick={() => setActiveTab(item.key)}
+                style={{
+                  width: "100%", display: "flex", alignItems: "center", gap: 12,
+                  padding: "12px 16px", marginBottom: 4, borderRadius: 10,
+                  background: isActive ? "rgba(255,255,255,0.18)" : "transparent",
+                  color: "#fff", border: "none", cursor: "pointer",
+                  fontSize: 14, fontWeight: isActive ? 600 : 500, textAlign: "left",
+                  transition: "all 0.2s ease",
+                  backdropFilter: isActive ? "blur(8px)" : "none",
+                }}
+                onMouseEnter={e => { if (!isActive) e.target.style.background = "rgba(255,255,255,0.08)"; }}
+                onMouseLeave={e => { if (!isActive) e.target.style.background = "transparent"; }}
+              >
+                {item.icon}
+                {item.label || item.key}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Sidebar footer */}
+        <div style={{ padding: "16px 20px", borderTop: "1px solid rgba(255,255,255,0.1)", fontSize: 11, color: "rgba(255,255,255,0.5)", textAlign: "center" }}>
+          MTI Admin Panel v1.0
+        </div>
       </div>
 
       {/* 🔥 MAIN CONTENT */}
-      <div className="flex-1 p-8">
+      <div style={{ flex: 1, padding: "28px 36px", overflowY: "auto" }}>
 
         {/* 🔹 HEADER */}
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold">Admin Dashboard</h1>
-          {/* <div className="w-10 h-10 bg-black rounded-full"></div> Logo Placeholder */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 28 }}>
+          <div>
+            <h1 style={{ fontSize: 26, fontWeight: 800, color: "#1a202c", margin: 0 }}>Admin Dashboard</h1>
+            <p style={{ color: "#718096", fontSize: 13, marginTop: 4 }}>{currentTime.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+          </div>
+          <div style={{
+            background: "linear-gradient(135deg, #127993, #0f6075)", color: "#fff",
+            padding: "8px 20px", borderRadius: 10, fontSize: 13, fontWeight: 600,
+            boxShadow: "0 4px 16px rgba(18,121,147,0.2)",
+          }}>
+            {currentTime.toLocaleTimeString()}
+          </div>
         </div>
 
+        {/* Toast */}
+        {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+
+        {/* ─────── WELCOME ─────── */}
         {activeTab === 'Welcome' && (
-          <div className="flex flex-col items-center justify-center h-64 bg-white rounded-xl shadow p-8 text-center mt-10">
-            <h2 className="text-4xl font-bold text-gray-800 mb-4">{getGreeting()}, Admin!</h2>
-            <p className="text-2xl text-gray-600 font-medium">{currentTime.toLocaleTimeString()}</p>
-            <p className="mt-6 text-gray-500">Select an option from the left navigation menu to get started.</p>
+          <div style={{ animation: "fadeUp 0.5s ease" }}>
+            <div className="card-hover" style={{
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+              minHeight: 300, background: "linear-gradient(135deg, #ffffff 0%, #f0f9fb 100%)",
+              borderRadius: 20, boxShadow: "0 4px 24px rgba(0,0,0,0.06)", padding: 48,
+              textAlign: "center", border: "1px solid rgba(18,121,147,0.08)",
+            }}>
+              <div style={{
+                width: 72, height: 72, borderRadius: "50%",
+                background: "linear-gradient(135deg, #127993, #0f6075)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                marginBottom: 20, boxShadow: "0 8px 24px rgba(18,121,147,0.25)",
+              }}>
+                <span style={{ fontSize: 32 }}>👋</span>
+              </div>
+              <h2 style={{ fontSize: 32, fontWeight: 800, color: "#1a202c", marginBottom: 8 }}>{getGreeting()}, Admin!</h2>
+              <p style={{ fontSize: 16, color: "#718096", maxWidth: 400 }}>Select an option from the navigation menu to get started.</p>
+
+              <div style={{ display: "flex", gap: 16, marginTop: 32, flexWrap: "wrap", justifyContent: "center" }}>
+                {[
+                  { label: "Users", count: users.length, color: "#127993" },
+                  { label: "Departments", count: departments.length, color: "#0d8f6e" },
+                  { label: "Reviews", count: reviews.length, color: "#6366f1" },
+                  { label: "Assignments", count: assignments.length, color: "#e97f0d" },
+                ].map(s => (
+                  <div key={s.label} style={{
+                    background: "#fff", borderRadius: 12, padding: "16px 24px",
+                    boxShadow: "0 2px 12px rgba(0,0,0,0.05)", minWidth: 110,
+                    border: "1px solid #e8ecf0",
+                  }}>
+                    <p style={{ fontSize: 28, fontWeight: 800, color: s.color, margin: 0 }}>{s.count}</p>
+                    <p style={{ fontSize: 12, fontWeight: 600, color: "#a0aec0", margin: 0, textTransform: "uppercase", letterSpacing: 0.5 }}>{s.label}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 
+        {/* ─────── DASHBOARD STATS ─────── */}
         {activeTab === 'Dashboard' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
-            <div className="bg-white p-6 rounded-xl shadow text-center">
-              <h3 className="text-xl font-bold mb-2">Total Users</h3>
-              <p className="text-4xl font-semibold text-[#127993]">{users.length}</p>
-            </div>
-            <div className="bg-white p-6 rounded-xl shadow text-center">
-              <h3 className="text-xl font-bold mb-2">Departments</h3>
-              <p className="text-4xl font-semibold text-[#127993]">{departments.length}</p>
-            </div>
-            <div className="bg-white p-6 rounded-xl shadow text-center">
-              <h3 className="text-xl font-bold mb-2">Total Reviews</h3>
-              <p className="text-4xl font-semibold text-[#127993]">{reviews.length}</p>
-            </div>
-            <div className="bg-white p-6 rounded-xl shadow text-center">
-              <h3 className="text-xl font-bold mb-2">Assignments</h3>
-              <p className="text-4xl font-semibold text-[#127993]">{assignments.length}</p>
-            </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 20, animation: "fadeUp 0.4s ease" }}>
+            {[
+              { label: "Total Users", count: users.length, color: "#127993", gradient: "linear-gradient(135deg, #e6f7fb, #d0effa)", icon: "👥" },
+              { label: "Departments", count: departments.length, color: "#0d8f6e", gradient: "linear-gradient(135deg, #e6faf3, #c6f6e0)", icon: "🏢" },
+              { label: "Total Reviews", count: reviews.length, color: "#6366f1", gradient: "linear-gradient(135deg, #eef2ff, #e0e7ff)", icon: "⭐" },
+              { label: "Assignments", count: assignments.length, color: "#e97f0d", gradient: "linear-gradient(135deg, #fff7ed, #ffedd5)", icon: "📋" },
+            ].map((s, i) => (
+              <div key={s.label} className="card-hover" style={{
+                background: "#fff", padding: 24, borderRadius: 16,
+                boxShadow: "0 2px 12px rgba(0,0,0,0.05)", textAlign: "center",
+                border: "1px solid #e8ecf0", animationDelay: `${i * 0.1}s`,
+              }}>
+                <div style={{
+                  width: 48, height: 48, borderRadius: 12, background: s.gradient,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  margin: "0 auto 12px", fontSize: 22,
+                }}>{s.icon}</div>
+                <h3 style={{ fontSize: 13, fontWeight: 600, color: "#718096", margin: "0 0 4px", textTransform: "uppercase", letterSpacing: 0.5 }}>{s.label}</h3>
+                <p style={{ fontSize: 36, fontWeight: 800, color: s.color, margin: 0 }}>{s.count}</p>
+              </div>
+            ))}
           </div>
         )}
 
+        {/* ─────── ORGANIZATION ─────── */}
         {(activeTab === 'Organization' || activeTab === 'Users' || activeTab === 'Departments') && (
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, animation: "fadeUp 0.4s ease" }}>
             
             {/* 🔹 USERS MANAGEMENT */}
-            <div className="bg-white p-5 rounded-xl shadow-md border border-gray-100 flex flex-col h-full">
-              <div className="flex justify-between items-center mb-4 border-b pb-2">
-                <h2 className="text-[#127993] text-lg font-bold">Manage Users</h2>
-                <span className="bg-gray-100 text-gray-600 text-sm py-1 px-3 rounded-full font-semibold">{users.length} Users</span>
+            <div className="card-hover" style={{ background: "#fff", padding: 24, borderRadius: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.05)", display: "flex", flexDirection: "column", border: "1px solid #e8ecf0" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, paddingBottom: 12, borderBottom: "2px solid #f0f4f8" }}>
+                <h2 style={{ color: "#127993", fontSize: 17, fontWeight: 700, margin: 0 }}>Manage Users</h2>
+                <span style={{ background: "linear-gradient(135deg, #e6f7fb, #d0effa)", color: "#127993", fontSize: 12, padding: "6px 14px", borderRadius: 20, fontWeight: 700 }}>{users.length} Users</span>
               </div>
               
-              <div className="flex flex-wrap gap-2 mb-4 bg-gray-50 p-3 rounded-lg border border-gray-100">
-                <input placeholder="Name" value={newUser.name} onChange={(e) => setNewUser({...newUser, name: e.target.value})} className="border p-2 rounded flex-auto min-w-[100px] outline-none focus:ring-1 focus:ring-[#127993]" />
-                <input placeholder="Email" value={newUser.email} onChange={(e) => setNewUser({...newUser, email: e.target.value})} className="border p-2 rounded flex-auto min-w-[120px] outline-none focus:ring-1 focus:ring-[#127993]" />
-                <input placeholder="Role" value={newUser.role} onChange={(e) => setNewUser({...newUser, role: e.target.value})} className="border p-2 rounded flex-auto min-w-[80px] outline-none focus:ring-1 focus:ring-[#127993]" />
-                <input placeholder="Dept ID" value={newUser.department_id} onChange={(e) => setNewUser({...newUser, department_id: e.target.value})} className="border p-2 rounded flex-auto min-w-[80px] outline-none focus:ring-1 focus:ring-[#127993]" type="number" />
-                <button onClick={createUser} className="bg-[#127993] text-white px-4 py-2 rounded hover:bg-[#0f6075] transition font-semibold whitespace-nowrap">Add User</button>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16, background: "#f8fafb", padding: 14, borderRadius: 12, border: "1px solid #e8ecf0" }}>
+                <input placeholder="Name" value={newUser.name} onChange={(e) => setNewUser({...newUser, name: e.target.value})} style={{ border: "1px solid #e2e8f0", padding: "8px 12px", borderRadius: 8, flex: "1 1 100px", outline: "none", fontSize: 13, transition: "all 0.2s" }} />
+                <input placeholder="Email" value={newUser.email} onChange={(e) => setNewUser({...newUser, email: e.target.value})} style={{ border: "1px solid #e2e8f0", padding: "8px 12px", borderRadius: 8, flex: "1 1 120px", outline: "none", fontSize: 13, transition: "all 0.2s" }} />
+                <input placeholder="Role" value={newUser.role} onChange={(e) => setNewUser({...newUser, role: e.target.value})} style={{ border: "1px solid #e2e8f0", padding: "8px 12px", borderRadius: 8, flex: "1 1 80px", outline: "none", fontSize: 13, transition: "all 0.2s" }} />
+                <input placeholder="Dept ID" value={newUser.department_id} onChange={(e) => setNewUser({...newUser, department_id: e.target.value})} type="number" style={{ border: "1px solid #e2e8f0", padding: "8px 12px", borderRadius: 8, flex: "1 1 70px", outline: "none", fontSize: 13, transition: "all 0.2s" }} />
+                <button onClick={createUser} className="btn-primary" style={{ background: "linear-gradient(135deg, #127993, #0f6075)", color: "#fff", padding: "8px 18px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 600, fontSize: 13, whiteSpace: "nowrap" }}>Add User</button>
               </div>
 
-              <div className="overflow-x-auto flex-1 max-h-[500px] overflow-y-auto">
-                <table className="w-full text-left border-collapse">
+              <div style={{ overflowX: "auto", flex: 1, maxHeight: 500, overflowY: "auto" }}>
+                <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}>
                   <thead>
-                    <tr className="bg-gray-50 text-gray-600 border-b border-gray-200">
-                      <th className="p-3 font-semibold">ID</th>
-                      <th className="p-3 font-semibold">Name</th>
-                      <th className="p-3 font-semibold">Role</th>
-                      <th className="p-3 font-semibold">Dept ID</th>
-                      <th className="p-3 font-semibold text-right">Action</th>
+                    <tr style={{ background: "#f8fafb", borderBottom: "2px solid #e8ecf0" }}>
+                      <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5 }}>ID</th>
+                      <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5 }}>Name</th>
+                      <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5 }}>Role</th>
+                      <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5 }}>Dept</th>
+                      <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5, textAlign: "right" }}>Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {users.length > 0 ? users.map(u => (
-                      <tr key={u.user_id} className="hover:bg-gray-50 transition border-b border-gray-100 last:border-0 group">
-                        <td className="p-3">
-                          <p className="text-xs text-gray-500 whitespace-nowrap">{u.user_id}</p>
+                      <tr key={u.user_id} style={{ borderBottom: "1px solid #f0f4f8", transition: "background 0.15s" }}
+                        onMouseEnter={e => e.currentTarget.style.background = "#f8fafb"}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        <td style={{ padding: "10px 14px", fontSize: 12, color: "#a0aec0" }}>{u.user_id}</td>
+                        <td style={{ padding: "10px 14px" }}>
+                          <p style={{ fontWeight: 600, color: "#1a202c", margin: 0, fontSize: 13 }}>{u.name}</p>
+                          <p style={{ fontSize: 11, color: "#a0aec0", margin: 0 }}>{u.email}</p>
                         </td>
-                        <td className="p-3">
-                          <p className="font-semibold text-gray-800 whitespace-nowrap">{u.name}</p>
-                          <p className="text-xs text-gray-500 whitespace-nowrap">{u.email}</p>
+                        <td style={{ padding: "10px 14px" }}>
+                          <span style={{ background: "#eef2ff", color: "#6366f1", padding: "3px 10px", borderRadius: 6, fontWeight: 600, fontSize: 11 }}>{u.role}</span>
                         </td>
-                        <td className="p-3"><span className="bg-blue-50 text-blue-700 py-1 px-2 rounded font-bold text-xs whitespace-nowrap">{u.role}</span></td>
-                        <td className="p-3 font-mono text-gray-500">#{u.department_id}</td>
-                        <td className="p-3 text-right">
-                          <button onClick={() => deleteUser(u.user_id)} className="text-red-500 hover:text-red-700 font-semibold text-sm opacity-100 lg:opacity-0 group-hover:opacity-100 transition whitespace-nowrap">Delete</button>
+                        <td style={{ padding: "10px 14px", fontFamily: "monospace", color: "#718096", fontSize: 12 }}>#{u.department_id}</td>
+                        <td style={{ padding: "10px 14px", textAlign: "right" }}>
+                          <button onClick={() => deleteUser(u.user_id)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>Delete</button>
                         </td>
                       </tr>
                     )) : (
-                      <tr><td colSpan="4" className="p-6 text-center text-gray-500 italic">No users found.</td></tr>
+                      <tr><td colSpan="5" style={{ padding: 24, textAlign: "center", color: "#a0aec0", fontStyle: "italic" }}>No users found.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -240,37 +484,39 @@ function Dashboard() {
             </div>
 
             {/* 🔹 DEPARTMENTS MANAGEMENT */}
-            <div className="bg-white p-5 rounded-xl shadow-md border border-gray-100 flex flex-col h-full">
-              <div className="flex justify-between items-center mb-4 border-b pb-2">
-                <h2 className="text-[#127993] text-lg font-bold">Manage Departments</h2>
-                <span className="bg-gray-100 text-gray-600 text-sm py-1 px-3 rounded-full font-semibold">{departments.length} Departments</span>
+            <div className="card-hover" style={{ background: "#fff", padding: 24, borderRadius: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.05)", display: "flex", flexDirection: "column", border: "1px solid #e8ecf0" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, paddingBottom: 12, borderBottom: "2px solid #f0f4f8" }}>
+                <h2 style={{ color: "#127993", fontSize: 17, fontWeight: 700, margin: 0 }}>Manage Departments</h2>
+                <span style={{ background: "linear-gradient(135deg, #e6faf3, #c6f6e0)", color: "#0d8f6e", fontSize: 12, padding: "6px 14px", borderRadius: 20, fontWeight: 700 }}>{departments.length} Depts</span>
               </div>
               
-              <div className="flex gap-2 mb-4 bg-gray-50 p-3 rounded-lg border border-gray-100">
-                <input placeholder="Department Name" value={newDept.department_name} onChange={(e) => setNewDept({...newDept, department_name: e.target.value})} className="border p-2 rounded flex-1 outline-none focus:ring-1 focus:ring-[#127993]" />
-                <button onClick={createDepartment} className="bg-[#127993] text-white px-5 py-2 rounded hover:bg-[#0f6075] transition font-semibold whitespace-nowrap">Add Dept</button>
+              <div style={{ display: "flex", gap: 8, marginBottom: 16, background: "#f8fafb", padding: 14, borderRadius: 12, border: "1px solid #e8ecf0" }}>
+                <input placeholder="Department Name" value={newDept.department_name} onChange={(e) => setNewDept({...newDept, department_name: e.target.value})} style={{ border: "1px solid #e2e8f0", padding: "8px 12px", borderRadius: 8, flex: 1, outline: "none", fontSize: 13, transition: "all 0.2s" }} />
+                <button onClick={createDepartment} className="btn-primary" style={{ background: "linear-gradient(135deg, #127993, #0f6075)", color: "#fff", padding: "8px 18px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 600, fontSize: 13, whiteSpace: "nowrap" }}>Add Dept</button>
               </div>
 
-              <div className="overflow-x-auto flex-1 max-h-[500px] overflow-y-auto">
-                <table className="w-full text-left border-collapse">
+              <div style={{ overflowX: "auto", flex: 1, maxHeight: 500, overflowY: "auto" }}>
+                <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}>
                   <thead>
-                    <tr className="bg-gray-50 text-gray-600 border-b border-gray-200">
-                      <th className="p-3 font-semibold">ID</th>
-                      <th className="p-3 font-semibold">Department Name</th>
-                      <th className="p-3 font-semibold text-right">Action</th>
+                    <tr style={{ background: "#f8fafb", borderBottom: "2px solid #e8ecf0" }}>
+                      <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5 }}>ID</th>
+                      <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5 }}>Department Name</th>
+                      <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5, textAlign: "right" }}>Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {departments.length > 0 ? departments.map(d => (
-                      <tr key={d.department_id} className="hover:bg-gray-50 transition border-b border-gray-100 last:border-0 group">
-                        <td className="p-3 font-bold text-gray-500">#{d.department_id}</td>
-                        <td className="p-3 font-semibold text-gray-800">{d.department_name}</td>
-                        <td className="p-3 text-right">
-                          <button onClick={() => deleteDepartment(d.department_id)} className="text-red-500 hover:text-red-700 font-semibold text-sm opacity-100 lg:opacity-0 group-hover:opacity-100 transition whitespace-nowrap">Delete</button>
+                      <tr key={d.department_id} style={{ borderBottom: "1px solid #f0f4f8", transition: "background 0.15s" }}
+                        onMouseEnter={e => e.currentTarget.style.background = "#f8fafb"}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        <td style={{ padding: "10px 14px", fontWeight: 700, color: "#a0aec0", fontSize: 12 }}>#{d.department_id}</td>
+                        <td style={{ padding: "10px 14px", fontWeight: 600, color: "#1a202c", fontSize: 13 }}>{d.department_name}</td>
+                        <td style={{ padding: "10px 14px", textAlign: "right" }}>
+                          <button onClick={() => deleteDepartment(d.department_id)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>Delete</button>
                         </td>
                       </tr>
                     )) : (
-                      <tr><td colSpan="3" className="p-6 text-center text-gray-500 italic">No departments found.</td></tr>
+                      <tr><td colSpan="3" style={{ padding: 24, textAlign: "center", color: "#a0aec0", fontStyle: "italic" }}>No departments found.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -280,98 +526,74 @@ function Dashboard() {
           </div>
         )}
 
+        {/* ─────── ASSIGN REVIEWS ─────── */}
         {activeTab === 'Assign Reviews' && (
-        <div className="flex flex-col gap-6">
+        <div style={{ display: "flex", flexDirection: "column", gap: 20, animation: "fadeUp 0.4s ease" }}>
           {/* 🔹 FILTERS */}
-          <div className="bg-white p-5 rounded-xl shadow-md border border-gray-100">
-            <h2 className="text-[#127993] text-lg font-bold mb-4 border-b pb-2">Filter Data</h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* Date Filter */}
-              <div className="flex flex-col relative w-full">
-                <label className="text-sm font-semibold text-gray-600 mb-1">Select Month</label>
-                <select
-                  onChange={(e) => filterByMonth(e.target.value)}
-                  className="p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-[#127993] focus:border-[#127993] outline-none transition bg-white"
-                >
+          <div className="card-hover" style={{ background: "#fff", padding: 24, borderRadius: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.05)", border: "1px solid #e8ecf0" }}>
+            <h2 style={{ color: "#127993", fontSize: 17, fontWeight: 700, marginBottom: 16, paddingBottom: 12, borderBottom: "2px solid #f0f4f8" }}>Filter Data</h2>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20 }}>
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: "#718096", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>Select Month</label>
+                <select onChange={(e) => filterByMonth(e.target.value)} style={{ padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 10, outline: "none", fontSize: 13, background: "#fff", transition: "all 0.2s", cursor: "pointer" }}>
                   <option value="">All Months</option>
-                  <option value="01">January</option>
-                  <option value="02">February</option>
-                  <option value="03">March</option>
-                  <option value="04">April</option>
-                  <option value="05">May</option>
-                  <option value="06">June</option>
-                  <option value="07">July</option>
-                  <option value="08">August</option>
-                  <option value="09">September</option>
-                  <option value="10">October</option>
-                  <option value="11">November</option>
-                  <option value="12">December</option>
+                  {["January","February","March","April","May","June","July","August","September","October","November","December"].map((m, i) => (
+                    <option key={m} value={String(i + 1).padStart(2, '0')}>{m}</option>
+                  ))}
                 </select>
               </div>
 
-              {/* Reviewer Filter */}
-              <div className="flex flex-col relative w-full">
-                <label className="text-sm font-semibold text-gray-600 mb-1">Filter by Reviewer</label>
-                <select
-                  onChange={(e) => setFilterReviewer(e.target.value)}
-                  value={filterReviewer}
-                  className="p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-[#127993] focus:border-[#127993] outline-none transition bg-white"
-                >
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: "#718096", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>Filter by Reviewer</label>
+                <select onChange={(e) => setFilterReviewer(e.target.value)} value={filterReviewer} style={{ padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 10, outline: "none", fontSize: 13, background: "#fff", transition: "all 0.2s", cursor: "pointer" }}>
                   <option value="">All Reviewers</option>
-                  {users.map(u => (
-                    <option key={u.user_id} value={u.user_id}>{u.name}</option>
-                  ))}
+                  {users.map(u => <option key={u.user_id} value={u.user_id}>{u.name}</option>)}
                 </select>
               </div>
 
-              {/* Reviewee Filter */}
-              <div className="flex flex-col relative w-full">
-                <label className="text-sm font-semibold text-gray-600 mb-1">Filter by Reviewee</label>
-                <select
-                  onChange={(e) => setFilterReviewee(e.target.value)}
-                  value={filterReviewee}
-                  className="p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-[#127993] focus:border-[#127993] outline-none transition bg-white"
-                >
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: "#718096", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>Filter by Reviewee</label>
+                <select onChange={(e) => setFilterReviewee(e.target.value)} value={filterReviewee} style={{ padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 10, outline: "none", fontSize: 13, background: "#fff", transition: "all 0.2s", cursor: "pointer" }}>
                   <option value="">All Reviewees</option>
-                  {users.map(u => (
-                    <option key={u.user_id} value={u.user_id}>{u.name}</option>
-                  ))}
+                  {users.map(u => <option key={u.user_id} value={u.user_id}>{u.name}</option>)}
                 </select>
               </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
             {/* 🔥 REVIEWS TABLE */}
-            <div className="bg-white p-5 rounded-xl shadow-md border border-gray-100 flex flex-col h-full">
-              <div className="flex justify-between items-center mb-4 border-b pb-2">
-                <h2 className="text-[#127993] text-lg font-bold">Reviews List</h2>
-                <span className="bg-gray-100 text-gray-600 text-sm py-1 px-3 rounded-full font-semibold">{filteredReviews.length} Results</span>
+            <div className="card-hover" style={{ background: "#fff", padding: 24, borderRadius: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.05)", display: "flex", flexDirection: "column", border: "1px solid #e8ecf0" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, paddingBottom: 12, borderBottom: "2px solid #f0f4f8" }}>
+                <h2 style={{ color: "#127993", fontSize: 17, fontWeight: 700, margin: 0 }}>Reviews List</h2>
+                <span style={{ background: "#eef2ff", color: "#6366f1", fontSize: 12, padding: "6px 14px", borderRadius: 20, fontWeight: 700 }}>{filteredReviews.length} Results</span>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}>
                   <thead>
-                    <tr className="bg-gray-50 text-gray-600 border-b border-gray-200">
-                      <th className="p-3 font-semibold">Reviewer</th>
-                      <th className="p-3 font-semibold">Reviewee</th>
-                      <th className="p-3 font-semibold text-center">Rating</th>
-                      <th className="p-3 font-semibold">Comment</th>
+                    <tr style={{ background: "#f8fafb", borderBottom: "2px solid #e8ecf0" }}>
+                      <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5 }}>Reviewer</th>
+                      <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5 }}>Reviewee</th>
+                      <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5, textAlign: "center" }}>Rating</th>
+                      <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5 }}>Comment</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredReviews.length > 0 ? (
                       filteredReviews.map((r, i) => (
-                        <tr key={i} className="hover:bg-gray-50 transition border-b border-gray-100 last:border-0">
-                          <td className="p-3 whitespace-nowrap">{getUserName(r.reviewer_id)}</td>
-                          <td className="p-3 whitespace-nowrap">{getUserName(r.reviewee_id)}</td>
-                          <td className="p-3 text-center"><span className="bg-blue-50 text-blue-700 py-1 px-2 rounded font-bold text-xs">{r.rating} / 5</span></td>
-                          <td className="p-3 truncate max-w-xs" title={r.review_text}>{r.review_text}</td>
+                        <tr key={i} style={{ borderBottom: "1px solid #f0f4f8", transition: "background 0.15s" }}
+                          onMouseEnter={e => e.currentTarget.style.background = "#f8fafb"}
+                          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                          <td style={{ padding: "10px 14px", whiteSpace: "nowrap", fontSize: 13 }}>{getUserName(r.reviewer_id)}</td>
+                          <td style={{ padding: "10px 14px", whiteSpace: "nowrap", fontSize: 13 }}>{getUserName(r.reviewee_id)}</td>
+                          <td style={{ padding: "10px 14px", textAlign: "center" }}>
+                            <span style={{ background: "#eef2ff", color: "#6366f1", padding: "3px 10px", borderRadius: 6, fontWeight: 700, fontSize: 11 }}>{r.rating} / 5</span>
+                          </td>
+                          <td style={{ padding: "10px 14px", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13, color: "#4a5568" }} title={r.review_text}>{r.review_text}</td>
                         </tr>
                       ))
                     ) : (
-                      <tr>
-                        <td colSpan="4" className="p-6 text-center text-gray-500 italic">No reviews match the current filters.</td>
-                      </tr>
+                      <tr><td colSpan="4" style={{ padding: 24, textAlign: "center", color: "#a0aec0", fontStyle: "italic" }}>No reviews match the current filters.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -379,74 +601,433 @@ function Dashboard() {
             </div>
 
             {/* 🔥 ASSIGNMENTS LIST */}
-            <div className="bg-white p-5 rounded-xl shadow-md border border-gray-100 flex flex-col h-full">
-              <div className="flex justify-between items-center mb-4 border-b pb-2 flex-wrap gap-2">
-                <h2 className="text-[#127993] text-lg font-bold">Current Assignments</h2>
+            <div className="card-hover" style={{ background: "#fff", padding: 24, borderRadius: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.05)", display: "flex", flexDirection: "column", border: "1px solid #e8ecf0" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, paddingBottom: 12, borderBottom: "2px solid #f0f4f8", flexWrap: "wrap", gap: 8 }}>
+                <h2 style={{ color: "#127993", fontSize: 17, fontWeight: 700, margin: 0 }}>Current Assignments</h2>
                 
-                <div className="flex items-center gap-3 w-full sm:w-auto mt-2 sm:mt-0">
-                  <div className="flex items-center gap-2 text-sm bg-gray-50 border border-gray-200 py-1 px-3 rounded-lg shadow-sm">
-                    <label className="text-gray-600 font-semibold m-0 whitespace-nowrap">Per Person:</label>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, background: "#f8fafb", border: "1px solid #e8ecf0", padding: "6px 12px", borderRadius: 8 }}>
+                    <label style={{ color: "#718096", fontWeight: 600, margin: 0, whiteSpace: "nowrap" }}>Per Person:</label>
                     <input 
-                      type="number" 
-                      min="1" 
-                      max="20"
+                      type="number" min="1" max="20"
                       value={assignmentsPerUser} 
                       onChange={(e) => setAssignmentsPerUser(e.target.value)}
-                      className="w-12 text-center bg-white border border-gray-300 rounded outline-none py-1 focus:ring-1 focus:ring-[#127993]"
+                      style={{ width: 40, textAlign: "center", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 6, outline: "none", padding: "4px 0", fontSize: 12 }}
                     />
                   </div>
                   
-                  <button
-                    onClick={assignReviews}
-                    className="bg-[#127993] text-white px-4 py-2 rounded-lg hover:bg-[#0f6075] transition shadow-sm font-semibold flex items-center gap-2 text-sm whitespace-nowrap"
-                  >
+                  <button onClick={assignReviews} className="btn-primary" style={{
+                    background: "linear-gradient(135deg, #127993, #0f6075)", color: "#fff",
+                    padding: "8px 16px", borderRadius: 8, border: "none", cursor: "pointer",
+                    fontWeight: 600, display: "flex", alignItems: "center", gap: 6, fontSize: 12, whiteSpace: "nowrap",
+                  }}>
                     <span>Generate New</span>
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                     </svg>
                   </button>
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto pr-2 space-y-3" style={{maxHeight: '400px'}}>
+              <div style={{ flex: 1, overflowY: "auto", paddingRight: 8, display: "flex", flexDirection: "column", gap: 8, maxHeight: 400 }}>
                 {filteredAssignments.length > 0 ? (
                   filteredAssignments.map((a, index) => (
-                    <div key={index} className="flex justify-between items-center p-3 hover:bg-gray-50 border border-gray-100 rounded-lg transition">
-                      <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold shadow-sm">
+                    <div key={index} style={{
+                      display: "flex", justifyContent: "space-between", alignItems: "center",
+                      padding: 12, border: "1px solid #e8ecf0", borderRadius: 10,
+                      transition: "all 0.2s",
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = "#f8fafb"; e.currentTarget.style.borderColor = "#d0effa"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.borderColor = "#e8ecf0"; }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ height: 36, width: 36, borderRadius: "50%", background: "linear-gradient(135deg, #dbeafe, #bfdbfe)", display: "flex", alignItems: "center", justifyContent: "center", color: "#3b82f6", fontWeight: 700, fontSize: 14 }}>
                           {getUserName(a.reviewer_id).charAt(0)}
                         </div>
                         <div>
-                          <p className="text-xs text-gray-500 font-semibold uppercase">Reviewer</p>
-                          <p className="font-semibold text-gray-800">{getUserName(a.reviewer_id)}</p>
+                          <p style={{ fontSize: 10, color: "#a0aec0", fontWeight: 600, textTransform: "uppercase", margin: 0 }}>Reviewer</p>
+                          <p style={{ fontWeight: 600, color: "#1a202c", margin: 0, fontSize: 13 }}>{getUserName(a.reviewer_id)}</p>
                         </div>
                       </div>
                       
-                      <div className="flex flex-col items-center px-4">
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-                        </svg>
-                      </div>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="#cbd5e0">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
+                      </svg>
 
-                      <div className="flex items-center gap-3 text-right">
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, textAlign: "right" }}>
                         <div>
-                          <p className="text-xs text-gray-500 font-semibold uppercase">Reviewee</p>
-                          <p className="font-semibold text-gray-800">{getUserName(a.reviewee_id)}</p>
+                          <p style={{ fontSize: 10, color: "#a0aec0", fontWeight: 600, textTransform: "uppercase", margin: 0 }}>Reviewee</p>
+                          <p style={{ fontWeight: 600, color: "#1a202c", margin: 0, fontSize: 13 }}>{getUserName(a.reviewee_id)}</p>
                         </div>
-                        <div className="h-10 w-10 rounded-full bg-green-100 flex items-center justify-center text-green-700 font-bold shadow-sm">
+                        <div style={{ height: 36, width: 36, borderRadius: "50%", background: "linear-gradient(135deg, #d1fae5, #a7f3d0)", display: "flex", alignItems: "center", justifyContent: "center", color: "#10b981", fontWeight: 700, fontSize: 14 }}>
                           {getUserName(a.reviewee_id).charAt(0)}
                         </div>
                       </div>
                     </div>
                   ))
                 ) : (
-                  <p className="text-gray-500 text-center py-6 italic">No assignments match the current filters.</p>
+                  <p style={{ color: "#a0aec0", textAlign: "center", padding: 24, fontStyle: "italic" }}>No assignments match the current filters.</p>
                 )}
               </div>
             </div>
           </div>
         </div>
         )}
+
+        {/* ─────── MANUAL ASSIGN ─────── */}
+        {activeTab === 'Manual Assign' && (
+          <div style={{ animation: "fadeUp 0.4s ease" }}>
+
+            {/* Step Indicator */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 0, marginBottom: 28 }}>
+              {[
+                { num: 1, label: "Select Reviewer" },
+                { num: 2, label: "Select Reviewee" },
+                { num: 3, label: "Preview & Send" },
+              ].map((step, i) => (
+                <React.Fragment key={step.num}>
+                  <div
+                    onClick={() => {
+                      if (step.num === 1) setManualStep(1);
+                      if (step.num === 2 && manualReviewer.length > 0) setManualStep(2);
+                      if (step.num === 3 && manualReviewer.length > 0 && manualReviewee.length > 0) setManualStep(3);
+                    }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 10, cursor: "pointer",
+                      padding: "10px 20px", borderRadius: 12,
+                      background: manualStep === step.num ? "linear-gradient(135deg, #127993, #0f6075)" : manualStep > step.num ? "#d0effa" : "#f0f4f8",
+                      color: manualStep === step.num ? "#fff" : manualStep > step.num ? "#127993" : "#a0aec0",
+                      transition: "all 0.3s ease",
+                    }}
+                  >
+                    <span style={{
+                      width: 28, height: 28, borderRadius: "50%",
+                      background: manualStep === step.num ? "rgba(255,255,255,0.25)" : manualStep > step.num ? "#127993" : "#e2e8f0",
+                      color: manualStep > step.num ? "#fff" : "inherit",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontWeight: 700, fontSize: 13,
+                    }}>
+                      {manualStep > step.num ? "✓" : step.num}
+                    </span>
+                    <span style={{ fontWeight: 600, fontSize: 13 }}>{step.label}</span>
+                  </div>
+                  {i < 2 && (
+                    <div style={{ width: 48, height: 2, background: manualStep > step.num ? "#127993" : "#e2e8f0", transition: "background 0.3s" }} />
+                  )}
+                </React.Fragment>
+              ))}
+            </div>
+
+            {/* ─── Step 1: Select Reviewer ─── */}
+            {manualStep === 1 && (
+              <div className="card-hover" style={{ background: "#fff", borderRadius: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.05)", border: "1px solid #e8ecf0", overflow: "hidden" }}>
+                <div style={{ padding: "20px 24px", borderBottom: "2px solid #f0f4f8", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <h2 style={{ color: "#127993", fontSize: 17, fontWeight: 700, margin: 0 }}>Step 1: Select Reviewer</h2>
+                    <p style={{ color: "#718096", fontSize: 13, margin: "4px 0 0" }}>Choose who will receive the assignment email</p>
+                  </div>
+                  <span style={{ background: "linear-gradient(135deg, #e6f7fb, #d0effa)", color: "#127993", fontSize: 12, padding: "6px 14px", borderRadius: 20, fontWeight: 700 }}>
+                    {manualReviewer.length} selected
+                  </span>
+                </div>
+
+                <div style={{ padding: "16px 24px", borderBottom: "1px solid #f0f4f8", display: "flex", gap: 12, alignItems: "center" }}>
+                  <div style={{ position: "relative", flex: 1 }}>
+                    <svg style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#a0aec0" }} width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    <input
+                      placeholder="Search users..."
+                      value={Reviewerearch}
+                      onChange={e => setReviewerearch(e.target.value)}
+                      style={{ width: "100%", padding: "10px 12px 10px 40px", border: "1px solid #e2e8f0", borderRadius: 10, outline: "none", fontSize: 13, transition: "all 0.2s", boxSizing: "border-box" }}
+                    />
+                  </div>
+                  <button onClick={selectAllReviewer} style={{
+                    background: "#f0f4f8", border: "1px solid #e2e8f0", padding: "10px 16px", borderRadius: 10,
+                    cursor: "pointer", fontWeight: 600, fontSize: 12, color: "#4a5568", whiteSpace: "nowrap", transition: "all 0.2s",
+                  }}>
+                    {users.filter(u => u.name.toLowerCase().includes(Reviewerearch.toLowerCase())).every(u => manualReviewer.includes(u.user_id)) ? "Deselect All" : "Select All"}
+                  </button>
+                </div>
+
+                <div style={{ maxHeight: 400, overflowY: "auto", padding: "8px 12px" }}>
+                  {users.filter(u => u.name.toLowerCase().includes(Reviewerearch.toLowerCase())).map(u => {
+                    const isSelected = manualReviewer.includes(u.user_id);
+                    return (
+                      <div
+                        key={u.user_id}
+                        className="check-item"
+                        onClick={() => toggleRecipient(u.user_id)}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 12,
+                          padding: "10px 14px", borderRadius: 10, marginBottom: 2,
+                          background: isSelected ? "#e6f7fb" : "transparent",
+                          border: isSelected ? "1px solid #b2e0eb" : "1px solid transparent",
+                        }}
+                      >
+                        <div style={{
+                          width: 20, height: 20, borderRadius: 6,
+                          border: isSelected ? "none" : "2px solid #cbd5e0",
+                          background: isSelected ? "linear-gradient(135deg, #127993, #0f6075)" : "#fff",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          transition: "all 0.2s", flexShrink: 0,
+                        }}>
+                          {isSelected && <span style={{ color: "#fff", fontSize: 12, fontWeight: 700 }}>✓</span>}
+                        </div>
+                        <div style={{
+                          width: 36, height: 36, borderRadius: "50%",
+                          background: isSelected ? "linear-gradient(135deg, #127993, #0f6075)" : "linear-gradient(135deg, #e2e8f0, #cbd5e0)",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          color: isSelected ? "#fff" : "#718096", fontWeight: 700, fontSize: 14, flexShrink: 0,
+                        }}>
+                          {u.name.charAt(0)}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <p style={{ fontWeight: 600, color: "#1a202c", margin: 0, fontSize: 13 }}>{u.name}</p>
+                          <p style={{ fontSize: 11, color: "#a0aec0", margin: 0 }}>{u.email}</p>
+                        </div>
+                        <span style={{ background: "#eef2ff", color: "#6366f1", padding: "3px 10px", borderRadius: 6, fontWeight: 600, fontSize: 11 }}>{u.role}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div style={{ padding: "16px 24px", borderTop: "1px solid #f0f4f8", display: "flex", justifyContent: "flex-end" }}>
+                  <button
+                    onClick={() => { if (manualReviewer.length > 0) setManualStep(2); else showToast("Select at least one recipient", "error"); }}
+                    className="btn-primary"
+                    style={{
+                      background: manualReviewer.length > 0 ? "linear-gradient(135deg, #127993, #0f6075)" : "#e2e8f0",
+                      color: manualReviewer.length > 0 ? "#fff" : "#a0aec0",
+                      padding: "10px 28px", borderRadius: 10, border: "none", cursor: "pointer",
+                      fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 8,
+                    }}
+                  >
+                    Next Step
+                    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ─── Step 2: Select Assignees ─── */}
+            {manualStep === 2 && (
+              <div className="card-hover" style={{ background: "#fff", borderRadius: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.05)", border: "1px solid #e8ecf0", overflow: "hidden" }}>
+                <div style={{ padding: "20px 24px", borderBottom: "2px solid #f0f4f8", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <h2 style={{ color: "#127993", fontSize: 17, fontWeight: 700, margin: 0 }}>Step 2: Select Users to Assign</h2>
+                    <p style={{ color: "#718096", fontSize: 13, margin: "4px 0 0" }}>Choose the users that Reviewer will need to review</p>
+                  </div>
+                  <span style={{ background: "linear-gradient(135deg, #fff7ed, #ffedd5)", color: "#e97f0d", fontSize: 12, padding: "6px 14px", borderRadius: 20, fontWeight: 700 }}>
+                    {manualReviewee.length} selected
+                  </span>
+                </div>
+
+                {/* Selected Reviewer preview */}
+                <div style={{ padding: "12px 24px", background: "#f8fafb", borderBottom: "1px solid #e8ecf0", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: "#718096" }}>Reviewer:</span>
+                  {manualReviewer.map(id => (
+                    <span key={id} style={{
+                      background: "linear-gradient(135deg, #e6f7fb, #d0effa)", color: "#127993",
+                      padding: "4px 12px", borderRadius: 16, fontSize: 11, fontWeight: 600,
+                      display: "flex", alignItems: "center", gap: 6,
+                    }}>
+                      {getUserName(id)}
+                      <button onClick={() => toggleRecipient(id)} style={{ background: "none", border: "none", color: "#127993", cursor: "pointer", fontSize: 14, padding: 0, lineHeight: 1 }}>×</button>
+                    </span>
+                  ))}
+                </div>
+
+                <div style={{ padding: "16px 24px", borderBottom: "1px solid #f0f4f8", display: "flex", gap: 12, alignItems: "center" }}>
+                  <div style={{ position: "relative", flex: 1 }}>
+                    <svg style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#a0aec0" }} width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    <input
+                      placeholder="Search users..."
+                      value={assigneeSearch}
+                      onChange={e => setAssigneeSearch(e.target.value)}
+                      style={{ width: "100%", padding: "10px 12px 10px 40px", border: "1px solid #e2e8f0", borderRadius: 10, outline: "none", fontSize: 13, transition: "all 0.2s", boxSizing: "border-box" }}
+                    />
+                  </div>
+                  <button onClick={selectAllAssignees} style={{
+                    background: "#f0f4f8", border: "1px solid #e2e8f0", padding: "10px 16px", borderRadius: 10,
+                    cursor: "pointer", fontWeight: 600, fontSize: 12, color: "#4a5568", whiteSpace: "nowrap", transition: "all 0.2s",
+                  }}>
+                    {users.filter(u => u.name.toLowerCase().includes(assigneeSearch.toLowerCase())).every(u => manualReviewee.includes(u.user_id)) ? "Deselect All" : "Select All"}
+                  </button>
+                </div>
+
+                <div style={{ maxHeight: 400, overflowY: "auto", padding: "8px 12px" }}>
+                  {users.filter(u => u.name.toLowerCase().includes(assigneeSearch.toLowerCase())).map(u => {
+                    const isSelected = manualReviewee.includes(u.user_id);
+                    return (
+                      <div
+                        key={u.user_id}
+                        className="check-item"
+                        onClick={() => toggleAssignee(u.user_id)}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 12,
+                          padding: "10px 14px", borderRadius: 10, marginBottom: 2,
+                          background: isSelected ? "#fff7ed" : "transparent",
+                          border: isSelected ? "1px solid #fed7aa" : "1px solid transparent",
+                        }}
+                      >
+                        <div style={{
+                          width: 20, height: 20, borderRadius: 6,
+                          border: isSelected ? "none" : "2px solid #cbd5e0",
+                          background: isSelected ? "linear-gradient(135deg, #e97f0d, #d97706)" : "#fff",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          transition: "all 0.2s", flexShrink: 0,
+                        }}>
+                          {isSelected && <span style={{ color: "#fff", fontSize: 12, fontWeight: 700 }}>✓</span>}
+                        </div>
+                        <div style={{
+                          width: 36, height: 36, borderRadius: "50%",
+                          background: isSelected ? "linear-gradient(135deg, #e97f0d, #d97706)" : "linear-gradient(135deg, #e2e8f0, #cbd5e0)",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          color: isSelected ? "#fff" : "#718096", fontWeight: 700, fontSize: 14, flexShrink: 0,
+                        }}>
+                          {u.name.charAt(0)}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <p style={{ fontWeight: 600, color: "#1a202c", margin: 0, fontSize: 13 }}>{u.name}</p>
+                          <p style={{ fontSize: 11, color: "#a0aec0", margin: 0 }}>{u.email}</p>
+                        </div>
+                        <span style={{ background: "#eef2ff", color: "#6366f1", padding: "3px 10px", borderRadius: 6, fontWeight: 600, fontSize: 11 }}>{u.role}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div style={{ padding: "16px 24px", borderTop: "1px solid #f0f4f8", display: "flex", justifyContent: "space-between" }}>
+                  <button onClick={() => setManualStep(1)} style={{
+                    background: "#f0f4f8", color: "#4a5568", padding: "10px 28px", borderRadius: 10,
+                    border: "1px solid #e2e8f0", cursor: "pointer", fontWeight: 600, fontSize: 14,
+                    display: "flex", alignItems: "center", gap: 8,
+                  }}>
+                    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                    Back
+                  </button>
+                  <button
+                    onClick={() => { if (manualReviewee.length > 0) setManualStep(3); else showToast("Select at least one user to assign", "error"); }}
+                    className="btn-primary"
+                    style={{
+                      background: manualReviewee.length > 0 ? "linear-gradient(135deg, #127993, #0f6075)" : "#e2e8f0",
+                      color: manualReviewee.length > 0 ? "#fff" : "#a0aec0",
+                      padding: "10px 28px", borderRadius: 10, border: "none", cursor: "pointer",
+                      fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 8,
+                    }}
+                  >
+                    Next Step
+                    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ─── Step 3: Preview & Send ─── */}
+            {manualStep === 3 && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+                {/* Reviewer Card */}
+                <div className="card-hover" style={{ background: "#fff", borderRadius: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.05)", border: "1px solid #e8ecf0", overflow: "hidden" }}>
+                  <div style={{ padding: "16px 24px", borderBottom: "2px solid #f0f4f8", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <h3 style={{ color: "#127993", fontSize: 15, fontWeight: 700, margin: 0 }}>📬 Reviewer</h3>
+                    <span style={{ background: "linear-gradient(135deg, #e6f7fb, #d0effa)", color: "#127993", fontSize: 11, padding: "4px 12px", borderRadius: 16, fontWeight: 700 }}>{manualReviewer.length}</span>
+                  </div>
+                  <div style={{ padding: "12px 16px", maxHeight: 300, overflowY: "auto" }}>
+                    {manualReviewer.map(id => (
+                      <div key={id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 8, marginBottom: 4 }}
+                        onMouseEnter={e => e.currentTarget.style.background = "#f8fafb"}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        <div style={{ width: 32, height: 32, borderRadius: "50%", background: "linear-gradient(135deg, #127993, #0f6075)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
+                          {getUserName(id).charAt(0)}
+                        </div>
+                        <div>
+                          <p style={{ fontWeight: 600, color: "#1a202c", margin: 0, fontSize: 13 }}>{getUserName(id)}</p>
+                          <p style={{ fontSize: 11, color: "#a0aec0", margin: 0 }}>{getUserEmail(id)}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Assignees Card */}
+                <div className="card-hover" style={{ background: "#fff", borderRadius: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.05)", border: "1px solid #e8ecf0", overflow: "hidden" }}>
+                  <div style={{ padding: "16px 24px", borderBottom: "2px solid #f0f4f8", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <h3 style={{ color: "#e97f0d", fontSize: 15, fontWeight: 700, margin: 0 }}>📋 Assigned Users</h3>
+                    <span style={{ background: "linear-gradient(135deg, #fff7ed, #ffedd5)", color: "#e97f0d", fontSize: 11, padding: "4px 12px", borderRadius: 16, fontWeight: 700 }}>{manualReviewee.length}</span>
+                  </div>
+                  <div style={{ padding: "12px 16px", maxHeight: 300, overflowY: "auto" }}>
+                    {manualReviewee.map(id => (
+                      <div key={id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 8, marginBottom: 4 }}
+                        onMouseEnter={e => e.currentTarget.style.background = "#f8fafb"}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        <div style={{ width: 32, height: 32, borderRadius: "50%", background: "linear-gradient(135deg, #e97f0d, #d97706)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
+                          {getUserName(id).charAt(0)}
+                        </div>
+                        <div>
+                          <p style={{ fontWeight: 600, color: "#1a202c", margin: 0, fontSize: 13 }}>{getUserName(id)}</p>
+                          <p style={{ fontSize: 11, color: "#a0aec0", margin: 0 }}>{getUserEmail(id)}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Summary & Send Button */}
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <div style={{
+                    background: "linear-gradient(135deg, #f0f9fb, #e6f7fb)",
+                    border: "1px solid #b2e0eb", borderRadius: 16, padding: 24,
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                  }}>
+                    <div>
+                      <p style={{ fontWeight: 700, color: "#127993", fontSize: 15, margin: 0 }}>Ready to send</p>
+                      <p style={{ color: "#4a7c87", fontSize: 13, margin: "4px 0 0" }}>
+                        {manualReviewee.length} user(s) will be assigned to {manualReviewer.length} recipient(s) — emails will be sent immediately.
+                      </p>
+                    </div>
+                    <div style={{ display: "flex", gap: 12 }}>
+                      <button onClick={() => setManualStep(2)} style={{
+                        background: "#fff", color: "#4a5568", padding: "12px 24px", borderRadius: 10,
+                        border: "1px solid #e2e8f0", cursor: "pointer", fontWeight: 600, fontSize: 13,
+                      }}>
+                        Back
+                      </button>
+                      <button
+                        onClick={sendManualAssignment}
+                        disabled={isSending}
+                        className="btn-primary"
+                        style={{
+                          background: isSending ? "#a0aec0" : "linear-gradient(135deg, #10b981, #059669)",
+                          color: "#fff", padding: "12px 32px", borderRadius: 10, border: "none",
+                          cursor: isSending ? "not-allowed" : "pointer",
+                          fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", gap: 8,
+                          boxShadow: isSending ? "none" : "0 4px 16px rgba(16,185,129,0.3)",
+                        }}
+                      >
+                        {isSending ? (
+                          <>
+                            <span style={{ width: 16, height: 16, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite", display: "inline-block" }} />
+                            Sending...
+                          </>
+                        ) : (
+                          <>
+                            <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                            Send Emails
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+          </div>
+        )}
+
       </div>
     </div>
   );
