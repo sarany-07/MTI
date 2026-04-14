@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 # Import DB session
-from app.database import get_db, SessionLocal
+from app.database import get_db, SessionLocal, Base, engine
 from app import models, schemas
 # Import models (tables)
 import app.models as models
@@ -14,6 +14,8 @@ import random  # for random selection
 from collections import defaultdict
 from app.email_utils import send_email, send_html_email
 # Create FastAPI app
+
+Base.metadata.create_all(bind=engine)
 app = FastAPI()
 
 app.add_middleware(

@@ -8,8 +8,10 @@ Base = declarative_base()
 # Get DB URL
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-engine = None
-SessionLocal = None
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(bind=engine)
+
+Base = declarative_base()
 
 # Only connect if valid MySQL URL
 if DATABASE_URL and DATABASE_URL.startswith("mysql"):

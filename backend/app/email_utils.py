@@ -40,7 +40,7 @@ def send_html_email(to_email, subject, recipient_name, assigned_users):
     """
     try:
         sender_email = os.getenv("EMAIL_USER")
-        app_password = os.getenv("EMAIL_PAS")
+        app_password = os.getenv("EMAIL_PASS")
 
         # Build the user rows
         user_rows = ""
