@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
+import BASE_URL from "../config";
 
 // ─── Toast Notification Component ────────────────────────────────────
 function Toast({ message, type, onClose }) {
@@ -89,23 +90,23 @@ function Dashboard() {
   // ================= API CALLS =================
 
   const fetchReviews = async () => {
-    const res = await axios.get("http://127.0.0.1:8000/reviews/");
+    const res = await axios.get(`${BASE_URL}/reviews/`);
     setReviews(res.data);
   };
 
   const fetchUsers = async () => {
-    const res = await axios.get("http://127.0.0.1:8000/users/");
+    const res = await axios.get(`${BASE_URL}/users/`);
     setUsers(res.data);
   };
 
   const fetchDepartments = async () => {
-    const res = await axios.get("http://127.0.0.1:8000/departments/");
+    const res = await axios.get(`${BASE_URL}/departments/`);
     setDepartments(res.data);
   };
 
   const fetchAssignments = async () => {
     try {
-      const res = await axios.get("http://127.0.0.1:8000/assignments/");
+      const res = await axios.get(`${BASE_URL}/assignments/`);
       setAssignments(res.data);
     } catch (error) {
       console.error(error);
@@ -114,7 +115,7 @@ function Dashboard() {
 
   const assignReviews = async () => {
     try {
-      await axios.post(`http://127.0.0.1:8000/assign-reviews/?num=${assignmentsPerUser}`);
+      await axios.post(`${BASE_URL}/assign-reviews/?num=${assignmentsPerUser}`);
       showToast("Assignments generated successfully!", "success");
       fetchAssignments(); // refresh
     } catch (error) {
@@ -126,14 +127,14 @@ function Dashboard() {
   // ================= CREATE =================
 
   const createUser = async () => {
-    await axios.post("http://127.0.0.1:8000/users/", null, { params: newUser });
+    await axios.post(`${BASE_URL}/users/`, null, { params: newUser });
     fetchUsers();
     setNewUser({ name: "", email: "", role: "", department_id: "" });
     showToast("User created successfully!", "success");
   };
 
   const createDepartment = async () => {
-    await axios.post("http://127.0.0.1:8000/departments/", null, { params: { name: newDept.department_name } });
+    await axios.post(`${BASE_URL}/departments/`, null, { params: { name: newDept.department_name } });
     fetchDepartments();
     setNewDept({ department_name: "" });
     showToast("Department created successfully!", "success");
@@ -142,13 +143,13 @@ function Dashboard() {
   // ================= DELETE =================
 
   const deleteUser = async (id) => {
-    await axios.delete(`http://127.0.0.1:8000/users/${id}`);
+    await axios.delete(`${BASE_URL}/users/${id}`);
     fetchUsers();
     showToast("User deleted", "info");
   };
 
   const deleteDepartment = async (id) => {
-    await axios.delete(`http://127.0.0.1:8000/departments/${id}`);
+    await axios.delete(`${BASE_URL}/departments/${id}`);
     fetchDepartments();
     showToast("Department deleted", "info");
   };
@@ -159,7 +160,7 @@ function Dashboard() {
     if (!month) return fetchReviews();
 
     const res = await axios.get(
-      `http://127.0.0.1:8000/reviews/filter/?month=${month}`
+      `${BASE_URL}/reviews/filter/?month=${month}`
     );
     setReviews(res.data);
   };
@@ -214,7 +215,7 @@ function Dashboard() {
 
     setIsSending(true);
     try {
-      const res = await axios.post("http://127.0.0.1:8000/manual-assign/", {
+      const res = await axios.post(`${BASE_URL}/manual-assign/`, {
         reviewer_ids: manualReviewer,
         reviewee_ids: manualReviewee,
       });

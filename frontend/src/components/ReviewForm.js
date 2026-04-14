@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import axios from "axios";
+import BASE_URL from "../config";
 
 function ReviewForm() {
   const [form, setForm] = useState({
@@ -17,7 +18,7 @@ function ReviewForm() {
     e.preventDefault();
 
     try {
-      await axios.post("http://127.0.0.1:8000/submit-review/", form);
+      await axios.post(`${BASE_URL}/submit-review/`, form);
       alert("Review submitted ✅");
     } catch (error) {
       alert(error.response?.data?.detail || "Error");
