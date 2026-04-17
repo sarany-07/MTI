@@ -1,7 +1,36 @@
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import os
 from dotenv import load_dotenv
-import requests
+
 load_dotenv()
+
+# 🔹 Send email function
+def send_email(to_email, subject, body):
+    try:
+        sender_email = os.getenv("EMAIL_USER")
+        app_password = os.getenv("EMAIL_PASS")   # IMPORTANT
+
+        msg = MIMEMultipart()
+        msg["From"] = sender_email
+        msg["To"] = to_email
+        msg["Subject"] = subject
+
+        msg.attach(MIMEText(body, "plain"))
+
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(sender_email, app_password)
+
+        server.sendmail(sender_email, to_email, msg.as_string())
+        server.quit()
+
+        print(f"✅ Email sent to {to_email}")
+
+    except Exception as e:
+        print(f"❌ Email failed: {e}")
+
 
 # 🔹 Send HTML email with styled user list
 def send_html_email(to_email, subject, recipient_name, assigned_users):
@@ -11,13 +40,7 @@ def send_html_email(to_email, subject, recipient_name, assigned_users):
     """
     try:
         sender_email = os.getenv("EMAIL_USER")
-        url = "https://api.resend.com/emails"
-
-        headers = {
-            "Authorization": f"Bearer {os.getenv('RESEND_API_KEY')}",
-            "Content-Type": "application/json"
-        }
-
+        app_password = os.getenv("EMAIL_PASS")
 
         user_rows = ""
         for i, user in enumerate(assigned_users, 1):
@@ -87,17 +110,28 @@ def send_html_email(to_email, subject, recipient_name, assigned_users):
         </html>
         """
 
-        data = {
-            "from": sender_email,
-            "to": [to_email],
-            "subject": subject,
-            "html": html_body
-        }
+        msg = MIMEMultipart("alternative")
+        msg["From"] = sender_email
+        msg["To"] = to_email
+        msg["Subject"] = subject
 
-        response = requests.post(url, headers=headers, json=data)
-        response.raise_for_status()
+        # Attach both plain text and HTML (email clients prefer HTML)
+        plain_text = f"Hi {recipient_name},\n\nYou have been assigned to review:\n"
+        for u in assigned_users:
+            plain_text += f"- {u['name']} ({u.get('email', '')})\n  Link: {u.get('form_url', 'N/A')}\n\n"
+        plain_text += "Thanks,\nAdmin Team"
 
-        print(f"✅ HTML Email sent to {to_email} via Resend")
+        msg.attach(MIMEText(plain_text, "plain"))
+        msg.attach(MIMEText(html_body, "html"))
+
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(sender_email, app_password)
+
+        server.sendmail(sender_email, to_email, msg.as_string())
+        server.quit()
+
+        print(f"✅ HTML Email sent to {to_email}")
         return True
 
     except Exception as e:

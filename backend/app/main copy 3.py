@@ -6,13 +6,13 @@ from app.database import get_db, SessionLocal, Base, engine
 from app import models, schemas
 # Import models (tables)
 import app.models as models
-
+import datetime
 
 from fastapi.middleware.cors import CORSMiddleware
 import random  # for random selection
 
 from collections import defaultdict
-from app.email_utils import send_html_email
+from app.email_utils import send_email, send_html_email
 # Create FastAPI app
 
 Base.metadata.create_all(bind=engine)
@@ -104,14 +104,13 @@ def get_departments(db: Session = Depends(get_db)):
 
 @app.post("/assign-reviews/")
 def assign_reviews(num: int = 4, db: Session = Depends(get_db)):
-    import datetime
 
-    # Get current month year
+    # Month handling
     now = datetime.datetime.now()
     month_year_str = now.strftime("%Y-%m")
     month_label = now.strftime("%B %Y")
 
-    # Create new assignment batch
+    # Create batch
     batch = models.AssignmentBatch(
         month_year=month_year_str,
         label=month_label
@@ -121,52 +120,57 @@ def assign_reviews(num: int = 4, db: Session = Depends(get_db)):
     db.refresh(batch)
 
     users = db.query(models.User).all()
-    past_assignments = db.query(models.ReviewAssignment).all()
-    
-    past_pairs = defaultdict(set)
-    for pa in past_assignments:
-        past_pairs[pa.reviewer_id].add(pa.reviewee_id)
 
-    assignments_map = defaultdict(list)
-
-    # Group users by department map for easier balancing
+    # -----------------------------
+    # GROUP USERS BY DEPARTMENT
+    # -----------------------------
     dept_users_map = defaultdict(list)
     for user in users:
         dept_users_map[user.department_id].append(user)
 
-    for user in users:
-        # Get users never reviewed
-        eligible_users = [u for u in users if u.user_id != user.user_id and u.user_id not in past_pairs[user.user_id]]
-        
-        # If exhausted all users, reset eligibility
-        if len(eligible_users) < num:
-             past_pairs[user.user_id] = set()
-             eligible_users = [u for u in users if u.user_id != user.user_id]
-             
-        assigned_users = []
-        
-        # Balance cross department
-        other_dept_users = [u for u in eligible_users if u.department_id != user.department_id]
-        same_dept_users = [u for u in eligible_users if u.department_id == user.department_id]
-        
-        # Shuffle randomly
-        random.shuffle(other_dept_users)
-        random.shuffle(same_dept_users)
-        
-        # Let's say we want at least 50% from other departments if possible
-        num_other = min(len(other_dept_users), (num + 1) // 2)
-        assigned_users.extend(other_dept_users[:num_other])
-        
-        needed = num - len(assigned_users)
-        assigned_users.extend(same_dept_users[:needed])
-        
-        # If we still need more, take remaining from other depts
-        if len(assigned_users) < num:
-            remaining_other = other_dept_users[num_other:]
-            more_needed = num - len(assigned_users)
-            assigned_users.extend(remaining_other[:more_needed])
-            
-        for target in assigned_users:
+    # -----------------------------
+    # CREATE ORDERED USER LIST
+    # -----------------------------
+    all_users = []
+    for dept_id, dept_users in dept_users_map.items():
+        for u in dept_users:
+            all_users.append((u, dept_id))
+
+    # -----------------------------
+    # MONTH OFFSET (rotation key)
+    # -----------------------------
+    # Example: 2025-01 → 1, 2025-02 → 2
+    month_offset = now.month
+
+    assignments_map = defaultdict(list)
+
+    # -----------------------------
+    # ASSIGN LOGIC
+    # -----------------------------
+    for i, (user, user_dept) in enumerate(all_users):
+
+        assigned = []
+
+        for dept_id, dept_users in dept_users_map.items():
+
+            # Skip same department
+            if dept_id == user_dept:
+                continue
+
+            n = len(dept_users)
+
+            # Rotation logic
+            idx = (i + month_offset) % n
+
+            reviewer = dept_users[idx]
+
+            assigned.append(reviewer)
+
+        # Limit to required number (if more departments)
+        assigned = assigned[:num]
+
+        # Save to DB
+        for target in assigned:
             assignment = models.ReviewAssignment(
                 reviewer_id=user.user_id,
                 reviewee_id=target.user_id,
@@ -174,10 +178,7 @@ def assign_reviews(num: int = 4, db: Session = Depends(get_db)):
             )
             db.add(assignment)
 
-            # Store for email
             assignments_map[user.user_id].append(target)
-            # update past pairs so we don't pick them immediately again in manual or something
-            past_pairs[user.user_id].add(target.user_id)
 
     db.commit()
 
@@ -192,6 +193,7 @@ def assign_reviews(num: int = 4, db: Session = Depends(get_db)):
              {
                  "name": p.name,
                  "email": p.email,
+                 "role": p.role,
                  "form_url": p.form_url
              } for p in assigned_people
         ]
@@ -494,7 +496,7 @@ def manual_assign(request: schemas.ManualAssignRequest, db: Session = Depends(ge
                 assigned_user_details.append({
                     "name": assignee.name,
                     "email": assignee.email,
-                    "role": getattr(assignee, "role", ""),
+                    "role": assignee.role,
                     "form_url": assignee.form_url
                 })
                 continue
@@ -510,7 +512,7 @@ def manual_assign(request: schemas.ManualAssignRequest, db: Session = Depends(ge
             assigned_user_details.append({
                 "name": assignee.name,
                 "email": assignee.email,
-                "role": getattr(assignee, "role", ""),
+                "role": assignee.role,
                 "form_url": assignee.form_url
             })
 

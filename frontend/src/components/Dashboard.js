@@ -39,11 +39,14 @@ function Toast({ message, type, onClose }) {
 }
 
 function Dashboard() {
-  const [reviews, setReviews] = useState([]);
   const [users, setUsers] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [assignments, setAssignments] = useState([]);
-  const [newUser, setNewUser] = useState({ name: "", email: "", role:"", department_id: "" });
+  const [newUser, setNewUser] = useState({ name: "", email: "", form_url: "", department_id: "" });
+
+  // ─── Batch State ────────────────────────────────────────────────────
+  const [batches, setBatches] = useState([]);
+  const [selectedBatchId, setSelectedBatchId] = useState("");
   const [newDept, setNewDept] = useState({ department_name: "" });
 
   const [filterReviewer, setFilterReviewer] = useState("");
@@ -81,18 +84,12 @@ function Dashboard() {
 
   // 🔹 Load initial data
   useEffect(() => {
-    fetchReviews();
     fetchUsers();
     fetchDepartments();
-    fetchAssignments();
+    fetchBatches();
   }, []);
 
   // ================= API CALLS =================
-
-  const fetchReviews = async () => {
-    const res = await axios.get(`${BASE_URL}/reviews/`);
-    setReviews(res.data);
-  };
 
   const fetchUsers = async () => {
     const res = await axios.get(`${BASE_URL}/users/`);
@@ -104,32 +101,68 @@ function Dashboard() {
     setDepartments(res.data);
   };
 
-  const fetchAssignments = async () => {
+  const fetchAssignments = async (batchId) => {
     try {
-      const res = await axios.get(`${BASE_URL}/assignments/`);
+      const url = batchId
+        ? `${BASE_URL}/assignments/?batch_id=${batchId}`
+        : `${BASE_URL}/assignments/`;
+      const res = await axios.get(url);
       setAssignments(res.data);
     } catch (error) {
       console.error(error);
     }
   };
 
+  const fetchBatches = async () => {
+    try {
+      const res = await axios.get(`${BASE_URL}/assignment-batches/`);
+      setBatches(res.data);
+      // Auto-select latest batch
+      if (res.data.length > 0) {
+        const latestId = res.data[0].id;
+        setSelectedBatchId(latestId);
+        fetchAssignments(latestId);
+      } else {
+        fetchAssignments();
+      }
+    } catch (error) {
+      console.error(error);
+      fetchAssignments();
+    }
+  };
+
+  const handleBatchChange = (batchId) => {
+    setSelectedBatchId(batchId);
+    if (batchId) {
+      fetchAssignments(batchId);
+    } else {
+      fetchAssignments();
+    }
+  };
+
   const assignReviews = async () => {
     try {
-      await axios.post(`${BASE_URL}/assign-reviews/?num=${assignmentsPerUser}`);
+      const res = await axios.post(`${BASE_URL}/assign-reviews/?num=${assignmentsPerUser}`);
       showToast("Assignments generated successfully!", "success");
-      fetchAssignments(); // refresh
+      // Auto-select the newly created batch
+      const newBatchId = res.data.batch_id;
+      await fetchBatches();
+      if (newBatchId) {
+        setSelectedBatchId(newBatchId);
+        fetchAssignments(newBatchId);
+      }
     } catch (error) {
       console.error(error);
       showToast("Failed to generate assignments", "error");
-  }
-};
+    }
+  };
 
   // ================= CREATE =================
 
   const createUser = async () => {
     await axios.post(`${BASE_URL}/users/`, null, { params: newUser });
     fetchUsers();
-    setNewUser({ name: "", email: "", role: "", department_id: "" });
+    setNewUser({ name: "", email: "", form_url: "", department_id: "" });
     showToast("User created successfully!", "success");
   };
 
@@ -152,17 +185,6 @@ function Dashboard() {
     await axios.delete(`${BASE_URL}/departments/${id}`);
     fetchDepartments();
     showToast("Department deleted", "info");
-  };
-
-  // ================= FILTER =================
-
-  const filterByMonth = async (month) => {
-    if (!month) return fetchReviews();
-
-    const res = await axios.get(
-      `${BASE_URL}/reviews/filter/?month=${month}`
-    );
-    setReviews(res.data);
   };
 
   // ================= MANUAL ASSIGN =================
@@ -243,17 +265,17 @@ function Dashboard() {
     return user ? user.name : `User ${id}`;
   };
 
+  const getUserDepartmentName = (id) => {
+    const user = users.find(u => u.user_id === id);
+    if (!user) return "";
+    const dept = departments.find(d => String(d.department_id) === String(user.department_id));
+    return dept ? dept.department_name : "N/A";
+  };
+
   const getUserEmail = (id) => {
     const user = users.find(u => u.user_id === id);
     return user ? user.email : "";
   };
-
-  const filteredReviews = reviews.filter(r => {
-    let match = true;
-    if (filterReviewer && String(r.reviewer_id) !== String(filterReviewer)) match = false;
-    if (filterReviewee && String(r.reviewee_id) !== String(filterReviewee)) match = false;
-    return match;
-  });
 
   const filteredAssignments = assignments.filter(a => {
     let match = true;
@@ -385,7 +407,6 @@ function Dashboard() {
                 {[
                   { label: "Users", count: users.length, color: "#127993" },
                   { label: "Departments", count: departments.length, color: "#0d8f6e" },
-                  { label: "Reviews", count: reviews.length, color: "#6366f1" },
                   { label: "Assignments", count: assignments.length, color: "#e97f0d" },
                 ].map(s => (
                   <div key={s.label} style={{
@@ -408,7 +429,6 @@ function Dashboard() {
             {[
               { label: "Total Users", count: users.length, color: "#127993", gradient: "linear-gradient(135deg, #e6f7fb, #d0effa)", icon: "👥" },
               { label: "Departments", count: departments.length, color: "#0d8f6e", gradient: "linear-gradient(135deg, #e6faf3, #c6f6e0)", icon: "🏢" },
-              { label: "Total Reviews", count: reviews.length, color: "#6366f1", gradient: "linear-gradient(135deg, #eef2ff, #e0e7ff)", icon: "⭐" },
               { label: "Assignments", count: assignments.length, color: "#e97f0d", gradient: "linear-gradient(135deg, #fff7ed, #ffedd5)", icon: "📋" },
             ].map((s, i) => (
               <div key={s.label} className="card-hover" style={{
@@ -442,8 +462,11 @@ function Dashboard() {
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16, background: "#f8fafb", padding: 14, borderRadius: 12, border: "1px solid #e8ecf0" }}>
                 <input placeholder="Name" value={newUser.name} onChange={(e) => setNewUser({...newUser, name: e.target.value})} style={{ border: "1px solid #e2e8f0", padding: "8px 12px", borderRadius: 8, flex: "1 1 100px", outline: "none", fontSize: 13, transition: "all 0.2s" }} />
                 <input placeholder="Email" value={newUser.email} onChange={(e) => setNewUser({...newUser, email: e.target.value})} style={{ border: "1px solid #e2e8f0", padding: "8px 12px", borderRadius: 8, flex: "1 1 120px", outline: "none", fontSize: 13, transition: "all 0.2s" }} />
-                <input placeholder="Role" value={newUser.role} onChange={(e) => setNewUser({...newUser, role: e.target.value})} style={{ border: "1px solid #e2e8f0", padding: "8px 12px", borderRadius: 8, flex: "1 1 80px", outline: "none", fontSize: 13, transition: "all 0.2s" }} />
-                <input placeholder="Dept ID" value={newUser.department_id} onChange={(e) => setNewUser({...newUser, department_id: e.target.value})} type="number" style={{ border: "1px solid #e2e8f0", padding: "8px 12px", borderRadius: 8, flex: "1 1 70px", outline: "none", fontSize: 13, transition: "all 0.2s" }} />
+                <input placeholder="Employee URL" type="url" value={newUser.form_url} onChange={(e) => setNewUser({...newUser, form_url: e.target.value})} style={{ border: "1px solid #e2e8f0", padding: "8px 12px", borderRadius: 8, flex: "1 1 160px", outline: "none", fontSize: 13, transition: "all 0.2s" }} />
+                <select value={newUser.department_id} onChange={(e) => setNewUser({...newUser, department_id: e.target.value})} style={{ border: "1px solid #e2e8f0", padding: "8px 12px", borderRadius: 8, flex: "1 1 120px", outline: "none", fontSize: 13, transition: "all 0.2s", background: "#fff", cursor: "pointer" }}>
+                  <option value="">Select Department</option>
+                  {departments.map(d => <option key={d.department_id} value={d.department_id}>{d.department_name}</option>)}
+                </select>
                 <button onClick={createUser} className="btn-primary" style={{ background: "linear-gradient(135deg, #127993, #0f6075)", color: "#fff", padding: "8px 18px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 600, fontSize: 13, whiteSpace: "nowrap" }}>Add User</button>
               </div>
 
@@ -453,7 +476,7 @@ function Dashboard() {
                     <tr style={{ background: "#f8fafb", borderBottom: "2px solid #e8ecf0" }}>
                       <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5 }}>ID</th>
                       <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5 }}>Name</th>
-                      <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5 }}>Role</th>
+                      <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5 }}>Form URL</th>
                       <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5 }}>Dept</th>
                       <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5, textAlign: "right" }}>Action</th>
                     </tr>
@@ -469,7 +492,14 @@ function Dashboard() {
                           <p style={{ fontSize: 11, color: "#a0aec0", margin: 0 }}>{u.email}</p>
                         </td>
                         <td style={{ padding: "10px 14px" }}>
-                          <span style={{ background: "#eef2ff", color: "#6366f1", padding: "3px 10px", borderRadius: 6, fontWeight: 600, fontSize: 11 }}>{u.role}</span>
+                          {u.form_url ? (
+                            <a href={u.form_url} target="_blank" rel="noopener noreferrer" style={{ color: "#127993", fontSize: 12, fontWeight: 600, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4, background: "#e6f7fb", padding: "3px 10px", borderRadius: 6, border: "1px solid #b2e0eb" }}>
+                              <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                              Open
+                            </a>
+                          ) : (
+                            <span style={{ color: "#cbd5e0", fontSize: 11, fontStyle: "italic" }}>—</span>
+                          )}
                         </td>
                         <td style={{ padding: "10px 14px", fontFamily: "monospace", color: "#718096", fontSize: 12 }}>#{u.department_id}</td>
                         <td style={{ padding: "10px 14px", textAlign: "right" }}>
@@ -477,7 +507,7 @@ function Dashboard() {
                         </td>
                       </tr>
                     )) : (
-                      <tr><td colSpan="5" style={{ padding: 24, textAlign: "center", color: "#a0aec0", fontStyle: "italic" }}>No users found.</td></tr>
+                      <tr><td colSpan="6" style={{ padding: 24, textAlign: "center", color: "#a0aec0", fontStyle: "italic" }}>No users found.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -532,18 +562,11 @@ function Dashboard() {
         <div style={{ display: "flex", flexDirection: "column", gap: 20, animation: "fadeUp 0.4s ease" }}>
           {/* 🔹 FILTERS */}
           <div className="card-hover" style={{ background: "#fff", padding: 24, borderRadius: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.05)", border: "1px solid #e8ecf0" }}>
-            <h2 style={{ color: "#127993", fontSize: 17, fontWeight: 700, marginBottom: 16, paddingBottom: 12, borderBottom: "2px solid #f0f4f8" }}>Filter Data</h2>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20 }}>
-              <div style={{ display: "flex", flexDirection: "column" }}>
-                <label style={{ fontSize: 12, fontWeight: 600, color: "#718096", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>Select Month</label>
-                <select onChange={(e) => filterByMonth(e.target.value)} style={{ padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 10, outline: "none", fontSize: 13, background: "#fff", transition: "all 0.2s", cursor: "pointer" }}>
-                  <option value="">All Months</option>
-                  {["January","February","March","April","May","June","July","August","September","October","November","December"].map((m, i) => (
-                    <option key={m} value={String(i + 1).padStart(2, '0')}>{m}</option>
-                  ))}
-                </select>
-              </div>
-
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, paddingBottom: 12, borderBottom: "2px solid #f0f4f8" }}>
+              <h2 style={{ color: "#127993", fontSize: 17, fontWeight: 700, margin: 0 }}>Filter Assignments</h2>
+            </div>
+            
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
               <div style={{ display: "flex", flexDirection: "column" }}>
                 <label style={{ fontSize: 12, fontWeight: 600, color: "#718096", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>Filter by Reviewer</label>
                 <select onChange={(e) => setFilterReviewer(e.target.value)} value={filterReviewer} style={{ padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 10, outline: "none", fontSize: 13, background: "#fff", transition: "all 0.2s", cursor: "pointer" }}>
@@ -562,113 +585,119 @@ function Dashboard() {
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-            {/* 🔥 REVIEWS TABLE */}
-            <div className="card-hover" style={{ background: "#fff", padding: 24, borderRadius: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.05)", display: "flex", flexDirection: "column", border: "1px solid #e8ecf0" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, paddingBottom: 12, borderBottom: "2px solid #f0f4f8" }}>
-                <h2 style={{ color: "#127993", fontSize: 17, fontWeight: 700, margin: 0 }}>Reviews List</h2>
-                <span style={{ background: "#eef2ff", color: "#6366f1", fontSize: 12, padding: "6px 14px", borderRadius: 20, fontWeight: 700 }}>{filteredReviews.length} Results</span>
-              </div>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr style={{ background: "#f8fafb", borderBottom: "2px solid #e8ecf0" }}>
-                      <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5 }}>Reviewer</th>
-                      <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5 }}>Reviewee</th>
-                      <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5, textAlign: "center" }}>Rating</th>
-                      <th style={{ padding: "10px 14px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5 }}>Comment</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredReviews.length > 0 ? (
-                      filteredReviews.map((r, i) => (
-                        <tr key={i} style={{ borderBottom: "1px solid #f0f4f8", transition: "background 0.15s" }}
-                          onMouseEnter={e => e.currentTarget.style.background = "#f8fafb"}
-                          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                          <td style={{ padding: "10px 14px", whiteSpace: "nowrap", fontSize: 13 }}>{getUserName(r.reviewer_id)}</td>
-                          <td style={{ padding: "10px 14px", whiteSpace: "nowrap", fontSize: 13 }}>{getUserName(r.reviewee_id)}</td>
-                          <td style={{ padding: "10px 14px", textAlign: "center" }}>
-                            <span style={{ background: "#eef2ff", color: "#6366f1", padding: "3px 10px", borderRadius: 6, fontWeight: 700, fontSize: 11 }}>{r.rating} / 5</span>
-                          </td>
-                          <td style={{ padding: "10px 14px", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13, color: "#4a5568" }} title={r.review_text}>{r.review_text}</td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr><td colSpan="4" style={{ padding: 24, textAlign: "center", color: "#a0aec0", fontStyle: "italic" }}>No reviews match the current filters.</td></tr>
-                    )}
-                  </tbody>
-                </table>
+          {/* 🔥 ASSIGNMENTS LIST (Table Format) */}
+          <div className="card-hover" style={{ background: "#fff", padding: 24, borderRadius: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.05)", display: "flex", flexDirection: "column", border: "1px solid #e8ecf0" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, paddingBottom: 12, borderBottom: "2px solid #f0f4f8", flexWrap: "wrap", gap: 8 }}>
+              <h2 style={{ color: "#127993", fontSize: 17, fontWeight: 700, margin: 0 }}>Review Assignments Hub</h2>
+              
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                {/* Batch Filter */}
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, background: "#f8fafb", border: "1px solid #e8ecf0", padding: "6px 12px", borderRadius: 8 }}>
+                  <label style={{ color: "#718096", fontWeight: 600, margin: 0, whiteSpace: "nowrap" }}>Batch:</label>
+                  <select
+                    value={selectedBatchId}
+                    onChange={(e) => handleBatchChange(e.target.value)}
+                    style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 6, outline: "none", padding: "4px 8px", fontSize: 12, cursor: "pointer", minWidth: 130 }}
+                  >
+                    <option value="">All Batches</option>
+                    {batches.map(b => (
+                      <option key={b.id} value={b.id}>{b.label || b.month_year}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, background: "#f8fafb", border: "1px solid #e8ecf0", padding: "6px 12px", borderRadius: 8 }}>
+                  <label style={{ color: "#718096", fontWeight: 600, margin: 0, whiteSpace: "nowrap" }}>Per Person:</label>
+                  <input 
+                    type="number" min="1" max="20"
+                    value={assignmentsPerUser} 
+                    onChange={(e) => setAssignmentsPerUser(e.target.value)}
+                    style={{ width: 40, textAlign: "center", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 6, outline: "none", padding: "4px 0", fontSize: 12 }}
+                  />
+                </div>
+                
+                <button onClick={assignReviews} className="btn-primary" style={{
+                  background: "linear-gradient(135deg, #127993, #0f6075)", color: "#fff",
+                  padding: "8px 16px", borderRadius: 8, border: "none", cursor: "pointer",
+                  fontWeight: 600, display: "flex", alignItems: "center", gap: 6, fontSize: 12, whiteSpace: "nowrap",
+                }}>
+                  <span>Generate New</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                </button>
               </div>
             </div>
 
-            {/* 🔥 ASSIGNMENTS LIST */}
-            <div className="card-hover" style={{ background: "#fff", padding: 24, borderRadius: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.05)", display: "flex", flexDirection: "column", border: "1px solid #e8ecf0" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, paddingBottom: 12, borderBottom: "2px solid #f0f4f8", flexWrap: "wrap", gap: 8 }}>
-                <h2 style={{ color: "#127993", fontSize: 17, fontWeight: 700, margin: 0 }}>Current Assignments</h2>
-                
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, background: "#f8fafb", border: "1px solid #e8ecf0", padding: "6px 12px", borderRadius: 8 }}>
-                    <label style={{ color: "#718096", fontWeight: 600, margin: 0, whiteSpace: "nowrap" }}>Per Person:</label>
-                    <input 
-                      type="number" min="1" max="20"
-                      value={assignmentsPerUser} 
-                      onChange={(e) => setAssignmentsPerUser(e.target.value)}
-                      style={{ width: 40, textAlign: "center", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 6, outline: "none", padding: "4px 0", fontSize: 12 }}
-                    />
-                  </div>
-                  
-                  <button onClick={assignReviews} className="btn-primary" style={{
-                    background: "linear-gradient(135deg, #127993, #0f6075)", color: "#fff",
-                    padding: "8px 16px", borderRadius: 8, border: "none", cursor: "pointer",
-                    fontWeight: 600, display: "flex", alignItems: "center", gap: 6, fontSize: 12, whiteSpace: "nowrap",
-                  }}>
-                    <span>Generate New</span>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                  </button>
-                </div>
+            {/* Selected Batch Info */}
+            {selectedBatchId && batches.find(b => String(b.id) === String(selectedBatchId)) && (
+              <div style={{ background: "linear-gradient(135deg, #e6f7fb, #d0effa)", borderLeft: "4px solid #127993", padding: "10px 16px", borderRadius: "0 8px 8px 0", marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <p style={{ margin: 0, color: "#127993", fontWeight: 600, fontSize: 13 }}>
+                  📋 Showing batch: <strong>{batches.find(b => String(b.id) === String(selectedBatchId))?.label || selectedBatchId}</strong>
+                </p>
+                <span style={{ background: "#127993", color: "#fff", fontSize: 11, padding: "3px 10px", borderRadius: 12, fontWeight: 700 }}>
+                  {filteredAssignments.length} assignments
+                </span>
               </div>
+            )}
 
-              <div style={{ flex: 1, overflowY: "auto", paddingRight: 8, display: "flex", flexDirection: "column", gap: 8, maxHeight: 400 }}>
-                {filteredAssignments.length > 0 ? (
-                  filteredAssignments.map((a, index) => (
-                    <div key={index} style={{
-                      display: "flex", justifyContent: "space-between", alignItems: "center",
-                      padding: 12, border: "1px solid #e8ecf0", borderRadius: 10,
-                      transition: "all 0.2s",
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.background = "#f8fafb"; e.currentTarget.style.borderColor = "#d0effa"; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.borderColor = "#e8ecf0"; }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <div style={{ height: 36, width: 36, borderRadius: "50%", background: "linear-gradient(135deg, #dbeafe, #bfdbfe)", display: "flex", alignItems: "center", justifyContent: "center", color: "#3b82f6", fontWeight: 700, fontSize: 14 }}>
-                          {getUserName(a.reviewer_id).charAt(0)}
-                        </div>
-                        <div>
-                          <p style={{ fontSize: 10, color: "#a0aec0", fontWeight: 600, textTransform: "uppercase", margin: 0 }}>Reviewer</p>
-                          <p style={{ fontWeight: 600, color: "#1a202c", margin: 0, fontSize: 13 }}>{getUserName(a.reviewer_id)}</p>
-                        </div>
-                      </div>
-                      
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="#cbd5e0">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-                      </svg>
-
-                      <div style={{ display: "flex", alignItems: "center", gap: 10, textAlign: "right" }}>
-                        <div>
-                          <p style={{ fontSize: 10, color: "#a0aec0", fontWeight: 600, textTransform: "uppercase", margin: 0 }}>Reviewee</p>
-                          <p style={{ fontWeight: 600, color: "#1a202c", margin: 0, fontSize: 13 }}>{getUserName(a.reviewee_id)}</p>
-                        </div>
-                        <div style={{ height: 36, width: 36, borderRadius: "50%", background: "linear-gradient(135deg, #d1fae5, #a7f3d0)", display: "flex", alignItems: "center", justifyContent: "center", color: "#10b981", fontWeight: 700, fontSize: 14 }}>
-                          {getUserName(a.reviewee_id).charAt(0)}
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <p style={{ color: "#a0aec0", textAlign: "center", padding: 24, fontStyle: "italic" }}>No assignments match the current filters.</p>
-                )}
-              </div>
+            <div style={{ flex: 1, overflowX: "auto", overflowY: "auto", paddingRight: 8, maxHeight: 600 }}>
+              <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ background: "#f8fafb", borderBottom: "2px solid #e8ecf0" }}>
+                    <th style={{ padding: "12px 16px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5 }}>Reviewer</th>
+                    <th style={{ padding: "12px 16px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5 }}>Reviewer Dept</th>
+                    <th style={{ padding: "12px 16px", fontWeight: 600, fontSize: 12, color: "#cbd5e0", textAlign: "center" }}>
+                      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
+                    </th>
+                    <th style={{ padding: "12px 16px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5 }}>Reviewee</th>
+                    <th style={{ padding: "12px 16px", fontWeight: 600, fontSize: 12, color: "#718096", textTransform: "uppercase", letterSpacing: 0.5 }}>Reviewee Dept</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredAssignments.length > 0 ? (
+                    filteredAssignments.map((a, index) => (
+                      <tr key={index} style={{ borderBottom: "1px solid #f0f4f8", transition: "background 0.15s" }}
+                        onMouseEnter={e => e.currentTarget.style.background = "#f8fafb"}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        <td style={{ padding: "12px 16px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <div style={{ height: 32, width: 32, borderRadius: "50%", background: "linear-gradient(135deg, #dbeafe, #bfdbfe)", display: "flex", alignItems: "center", justifyContent: "center", color: "#3b82f6", fontWeight: 700, fontSize: 12 }}>
+                              {getUserName(a.reviewer_id).charAt(0)}
+                            </div>
+                            <div>
+                              <p style={{ fontWeight: 600, color: "#1a202c", margin: 0, fontSize: 13 }}>{getUserName(a.reviewer_id)}</p>
+                              <p style={{ fontSize: 11, color: "#a0aec0", margin: 0 }}>{getUserEmail(a.reviewer_id)}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td style={{ padding: "12px 16px", fontSize: 13, color: "#4a5568" }}>
+                          <span style={{ background: "#eef2ff", color: "#6366f1", padding: "4px 10px", borderRadius: 6, fontWeight: 600, fontSize: 11 }}>{getUserDepartmentName(a.reviewer_id)}</span>
+                        </td>
+                        <td style={{ padding: "12px 16px", textAlign: "center", color: "#cbd5e0" }}>
+                          <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" /></svg>
+                        </td>
+                        <td style={{ padding: "12px 16px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <div style={{ height: 32, width: 32, borderRadius: "50%", background: "linear-gradient(135deg, #d1fae5, #a7f3d0)", display: "flex", alignItems: "center", justifyContent: "center", color: "#10b981", fontWeight: 700, fontSize: 12 }}>
+                              {getUserName(a.reviewee_id).charAt(0)}
+                            </div>
+                            <div>
+                              <p style={{ fontWeight: 600, color: "#1a202c", margin: 0, fontSize: 13 }}>{getUserName(a.reviewee_id)}</p>
+                              <p style={{ fontSize: 11, color: "#a0aec0", margin: 0 }}>{getUserEmail(a.reviewee_id)}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td style={{ padding: "12px 16px", fontSize: 13, color: "#4a5568" }}>
+                          <span style={{ background: "#f0fdf4", color: "#16a34a", padding: "4px 10px", borderRadius: 6, fontWeight: 600, fontSize: 11 }}>{getUserDepartmentName(a.reviewee_id)}</span>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr><td colSpan="5" style={{ padding: 32, textAlign: "center", color: "#a0aec0", fontStyle: "italic" }}>No assignments match the current filters.</td></tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -787,7 +816,7 @@ function Dashboard() {
                           <p style={{ fontWeight: 600, color: "#1a202c", margin: 0, fontSize: 13 }}>{u.name}</p>
                           <p style={{ fontSize: 11, color: "#a0aec0", margin: 0 }}>{u.email}</p>
                         </div>
-                        <span style={{ background: "#eef2ff", color: "#6366f1", padding: "3px 10px", borderRadius: 6, fontWeight: 600, fontSize: 11 }}>{u.role}</span>
+                        <span style={{ background: "#eef2ff", color: "#6366f1", padding: "3px 10px", borderRadius: 6, fontWeight: 600, fontSize: 11 }}>{getUserDepartmentName(u.user_id)}</span>
                       </div>
                     );
                   })}
@@ -895,7 +924,7 @@ function Dashboard() {
                           <p style={{ fontWeight: 600, color: "#1a202c", margin: 0, fontSize: 13 }}>{u.name}</p>
                           <p style={{ fontSize: 11, color: "#a0aec0", margin: 0 }}>{u.email}</p>
                         </div>
-                        <span style={{ background: "#eef2ff", color: "#6366f1", padding: "3px 10px", borderRadius: 6, fontWeight: 600, fontSize: 11 }}>{u.role}</span>
+                        <span style={{ background: "#eef2ff", color: "#6366f1", padding: "3px 10px", borderRadius: 6, fontWeight: 600, fontSize: 11 }}>{getUserDepartmentName(u.user_id)}</span>
                       </div>
                     );
                   })}

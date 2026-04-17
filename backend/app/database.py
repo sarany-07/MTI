@@ -3,6 +3,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
 
+
 load_dotenv()
 
 # Base is REQUIRED for models
@@ -30,6 +31,7 @@ if DATABASE_URL:
         print(f"❌ DB connection failed: {e}")
         engine = None
         SessionLocal = None
+        print("Database not configured yet")
 else:
     print("⚠️ DATABASE_URL not set — skipping DB connection")
     engine = None

@@ -9,10 +9,10 @@ function App() {
     <Router>
       <Routes>
         {/* Form Page */}
-        <Route path="/" element={<ReviewForm />} />
+        {/* <Route path="/" element={<ReviewForm />} /> */}
 
         {/* Dashboard Page */}
-        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/" element={<Dashboard />} />
       </Routes>
     </Router>
   );
